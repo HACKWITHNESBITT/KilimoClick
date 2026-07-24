@@ -1236,3 +1236,384 @@ canvas { display: block; }
 @media (max-width: 380px) {
   .stats-grid { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   ACCENT BUTTON & BEST PLANTING MODAL STYLES
+   ============================================================ */
+.btn-accent {
+  background: linear-gradient(135deg, #F59E0B, #D97706);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.25);
+}
+.btn-accent:hover {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  box-shadow: 0 6px 24px rgba(245, 158, 11, 0.4);
+  transform: translateY(-1px);
+}
+.checker-btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(5, 12, 20, 0.84);
+  backdrop-filter: blur(14px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+.modal-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Modal Container */
+.modal-container {
+  background: var(--surface);
+  max-width: 960px;
+  width: 100%;
+  max-height: 90vh;
+  border: 1px solid var(--border-hover);
+  border-radius: 18px;
+  box-shadow: var(--shadow-lg), 0 0 50px rgba(74, 222, 128, 0.08);
+  display: flex;
+  flex-direction: column;
+  transform: scale(0.94);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+.modal-overlay.active .modal-container {
+  transform: scale(1);
+}
+
+/* Modal Header */
+.modal-header {
+  padding: 22px 28px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  background: var(--surface-2);
+}
+.modal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  background: rgba(74, 222, 128, 0.1);
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  margin-bottom: 6px;
+}
+.modal-title {
+  font-family: var(--font-head);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.modal-subtitle {
+  font-size: 13.5px;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-size: 32px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color var(--t);
+}
+.modal-close:hover { color: #fff; }
+
+/* Modal Body */
+.modal-body {
+  padding: 24px 28px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Season Filter Pills */
+.season-filter-bar {
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.filter-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 8px;
+  display: block;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+.season-pills {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.season-pill {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.season-pill:hover {
+  border-color: rgba(74, 222, 128, 0.5);
+  background: var(--surface-3);
+  transform: translateY(-1px);
+}
+.season-pill.active {
+  border-color: var(--green);
+  background: rgba(74, 222, 128, 0.12);
+  box-shadow: 0 0 16px rgba(74, 222, 128, 0.18);
+}
+.pill-icon { font-size: 22px; }
+.pill-text {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  display: flex;
+  flex-direction: column;
+}
+.pill-text small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-2);
+  margin-top: 2px;
+}
+
+/* Climate Summary Card */
+.climate-summary-card {
+  background: linear-gradient(135deg, rgba(27, 94, 32, 0.2), rgba(15, 23, 42, 0.7));
+  border: 1px solid rgba(74, 222, 128, 0.22);
+  border-radius: 12px;
+  padding: 18px 22px;
+  margin-bottom: 24px;
+}
+.climate-summary-title {
+  font-family: var(--font-head);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--green);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.climate-summary-text {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.climate-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.climate-meta-item {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.climate-meta-label {
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.climate-meta-val {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-1);
+  margin-top: 2px;
+}
+
+/* Crops Section */
+.recommended-crops-section .section-subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.recommended-crops-section h3 {
+  font-family: var(--font-head);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.crop-count-badge {
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--blue);
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+/* Crops Grid */
+.crops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+.crop-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  transition: all 0.25s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.crop-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--border-hover);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.crop-card-top { margin-bottom: 14px; }
+.crop-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.crop-name {
+  font-family: var(--font-head);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.crop-variety {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.crop-match-badge {
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.crop-match-badge.high {
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+.crop-match-badge.mod {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--amber);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.crop-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 10px 0 12px 0;
+}
+.crop-tag {
+  background: rgba(255,255,255,0.06);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+.crop-details-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  margin-bottom: 12px;
+}
+.crop-detail-row {
+  display: flex;
+  justify-content: space-between;
+}
+.crop-detail-key { color: var(--text-3); }
+.crop-detail-val { font-weight: 600; color: var(--text-1); }
+
+.climate-benefit-box {
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 3px solid var(--amber);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  color: var(--text-1);
+  margin-bottom: 14px;
+  line-height: 1.45;
+}
+.crop-select-btn {
+  width: 100%;
+  padding: 9px 12px;
+  background: var(--surface-3);
+  color: var(--text-1);
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.crop-select-btn:hover {
+  background: var(--primary);
+  border-color: var(--green);
+  color: #fff;
+  box-shadow: 0 4px 12px var(--primary-glow);
+}
+
+/* Modal Footer */
+.modal-footer {
+  padding: 16px 28px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-2);
+}
+.modal-footer-note {
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 640px) {
+  .modal-container { max-height: 95vh; border-radius: 12px; }
+  .modal-header, .modal-body, .modal-footer { padding: 16px 18px; }
+  .season-pills { grid-template-columns: 1fr; }
+  .crops-grid { grid-template-columns: 1fr; }
+}
+
