@@ -11,7 +11,7 @@ from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 # --------------------------------------------------------------------------
-# Configuration (environment variables — see .env.example)
+# Configuration (environment variables)
 # --------------------------------------------------------------------------
 
 GIS_DATA_DIR = os.getenv("GIS_DATA_DIR", "AgriNode_GIS_Data")
@@ -55,7 +55,7 @@ app.add_middleware(
 )
 
 # --------------------------------------------------------------------------
-# Static reference data (Phase 1 hand-off files)
+# Static reference data
 # --------------------------------------------------------------------------
 
 with open(os.path.join(GIS_DATA_DIR, "Crop_Logic_Matrix.json")) as f:
@@ -97,3 +97,66 @@ USSD_LOCATIONS = {
     "5": {"name": "Kondele", "lat": -0.0860, "lon": 34.7600},
     "6": {"name": "Mamboleo", "lat": -0.0610, "lon": 34.7750},
 }
+
+# --------------------------------------------------------------------------
+# In-memory forecast cache
+# --------------------------------------------------------------------------
+
+_forecast_cache: dict[str, tuple[float, Optional[dict]]] = {}
+
+
+def _cache_key(lat: float, lon: float) -> str:
+    return f"{round(lat, FORECAST_CACHE_PRECISION)}:{round(lon, FORECAST_CACHE_PRECISION)}"
+
+
+def _cache_get(lat: float, lon: float) -> Optional[dict]:
+    entry = _forecast_cache.get(_cache_key(lat, lon))
+    if not entry:
+        return None
+    expires_at, value = entry
+    if time.time() > expires_at:
+        return None
+    return value
+
+
+def _cache_set(lat: float, lon: float, value: Optional[dict]) -> None:
+    _forecast_cache[_cache_key(lat, lon)] = (
+        time.time() + FORECAST_CACHE_TTL_SECONDS,
+        value,
+    )
+
+
+# --------------------------------------------------------------------------
+# Raster helpers
+# --------------------------------------------------------------------------
+
+
+def get_pixel_value(tif_path: str, lat: float, lon: float):
+    """Read a single pixel value at (lat, lon) from a WGS84 GeoTIFF.
+
+    Returns None if the point falls outside the raster's extent or the file
+    can't be read — callers treat that as "no data at this point".
+    """
+    try:
+        with rasterio.open(tif_path) as src:
+            row, col = src.index(lon, lat)
+            if row < 0 or col < 0 or row >= src.height or col >= src.width:
+                return None
+            value = src.read(1)[row, col]
+            nodata = src.nodata
+            if nodata is not None and value == nodata:
+                return None
+            return value
+    except Exception as exc:  # pragma: no cover - defensive, matches Phase 2 style
+        logger.warning("Raster read failed for %s at (%s, %s): %s", tif_path, lat, lon, exc)
+        return None
+
+
+def validate_coordinates(lat: float, lon: float) -> Optional[str]:
+    if lat is None or lon is None:
+        return "lat and lon are required."
+    if not (-90 <= lat <= 90):
+        return "lat must be between -90 and 90."
+    if not (-180 <= lon <= 180):
+        return "lon must be between -180 and 180."
+    return None
