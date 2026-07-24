@@ -614,8 +614,6 @@ def _ussd_menu(steps: list[str]) -> str:
     if choice == free_text_option:
         if len(steps) == 2:
             return "CON Enter the name of your nearest landmark:"
-        # len(steps) >= 3: free-text landmark typed, but this build has no
-        # geocoder wired up — fail clearly rather than guessing a location.
         return (
             "END Sorry, free-text landmark lookup isn't available yet. "
             "Please dial in again and choose a listed area."
