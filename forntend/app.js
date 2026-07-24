@@ -6,10 +6,13 @@
 
 // --- Crop Logic Matrix (mirrors Crop_Logic_Matrix.json) ---
 const CROP_LOGIC = {
-  Maize:    { min_pH: 5.5, max_pH: 7.0, max_slope: 10, water_need: 'Medium', irrigation_rule: 'Rainfed / Sprinkler' },
-  Rice:     { min_pH: 5.5, max_pH: 6.5, max_slope: 2,  water_need: 'High',   irrigation_rule: 'Flooded' },
-  Tomatoes: { min_pH: 6.0, max_pH: 6.8, max_slope: 12, water_need: 'Medium', irrigation_rule: 'Drip Irrigation' },
-  Cassava:  { min_pH: 5.0, max_pH: 6.0, max_slope: 15, water_need: 'Low',    irrigation_rule: 'Rainfed' },
+  Maize:          { min_pH: 5.5, max_pH: 7.0, max_slope: 10, water_need: 'Medium', irrigation_rule: 'Rainfed / Sprinkler' },
+  Rice:           { min_pH: 5.5, max_pH: 6.5, max_slope: 2,  water_need: 'High',   irrigation_rule: 'Flooded' },
+  Tomatoes:       { min_pH: 6.0, max_pH: 6.8, max_slope: 12, water_need: 'Medium', irrigation_rule: 'Drip Irrigation' },
+  Cassava:        { min_pH: 5.0, max_pH: 6.0, max_slope: 15, water_need: 'Low',    irrigation_rule: 'Rainfed' },
+  Sorghum:        { min_pH: 5.5, max_pH: 7.5, max_slope: 12, water_need: 'Low',    irrigation_rule: 'Rainfed / Supplementary' },
+  Cowpeas:        { min_pH: 5.5, max_pH: 7.0, max_slope: 15, water_need: 'Low',    irrigation_rule: 'Rainfed' },
+  'Sweet Potatoes':{ min_pH: 5.5, max_pH: 6.8, max_slope: 12, water_need: 'Low',    irrigation_rule: 'Rainfed / Ridging' },
 };
 
 // Simulated sub-location soil/slope data for Kisumu
@@ -47,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSafetyCheck();
   initScrollAnimations();
   initCounters();
+  initBestPlantingModal();
 });
 
 // ============================================================
@@ -720,3 +724,402 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 320);
   }, 4200);
 }
+
+// ============================================================
+// CLIMATE-ADAPTIVE BEST PLANTING ADVISOR MODAL
+// ============================================================
+const CLIMATE_SEASON_DATA = {
+  'long-rains': {
+    title: '🌧️ Long Rains Season (March – May)',
+    prediction: 'Climate shift models project heavier, concentrated downpours (+18% moisture volume) with delayed onset. High flood risk in low-elevation basin zones.',
+    rainfall: '450mm – 620mm',
+    tempTrend: '+1.1°C vs Baseline',
+    riskLevel: 'Moderate Flood / Soil Washout Risk',
+    advice: 'Prioritize crops with sturdy root anchoring or flood resilience. Implement terracing and raised beds.',
+    crops: [
+      {
+        name: 'Maize',
+        variety: 'SC 419 (Early Hybrid)',
+        categoryTags: ['Sturdy Stalk', 'Early Harvest (90 Days)', 'High Yield'],
+        window: 'Early March – Mid April',
+        waterNeed: 'Medium',
+        irrigation: 'Rainfed / Sprinkler Backup',
+        baseMatch: 96,
+        climateBenefit: 'Bred specifically to withstand high wind velocity and heavy early seasonal downpours.'
+      },
+      {
+        name: 'Rice',
+        variety: 'NERICA Upland 4',
+        categoryTags: ['Flood Tolerant', 'Clay Soil Friendly', 'High Moisture'],
+        window: 'Late March – Early May',
+        waterNeed: 'High',
+        irrigation: 'Rainfed / Flooded Basin',
+        baseMatch: 94,
+        climateBenefit: 'Thrives in waterlogged clay soils, avoiding seed rot during heavy Lake Victoria rain surges.'
+      },
+      {
+        name: 'Tomatoes',
+        variety: 'Anna F1 (Raised Bed)',
+        categoryTags: ['Bacterial Wilt Resistant', 'High Value', 'Drip Adaptable'],
+        window: 'Mid March – April',
+        waterNeed: 'Medium',
+        irrigation: 'Drip Irrigation + Mulching',
+        baseMatch: 88,
+        climateBenefit: 'Resists fungal leaf blight during intense rain pulses when grown on elevated ridges.'
+      },
+      {
+        name: 'Cowpeas',
+        variety: 'K80 (Fast Canopy)',
+        categoryTags: ['Ground Cover', 'Nitrogen-Fixing', '60-Day Crop'],
+        window: 'Early March – April',
+        waterNeed: 'Low',
+        irrigation: 'Rainfed',
+        baseMatch: 92,
+        climateBenefit: 'Rapid canopy growth shields topsoil from heavy rain erosion and locks in nitrogen.'
+      }
+    ]
+  },
+
+  'short-rains': {
+    title: '⛈️ Short Rains Season (October – December)',
+    prediction: 'Predicted short rain windows with erratic rain pulses interspersed with heat spikes (+1.4°C). Short duration window requires fast-maturing crops.',
+    rainfall: '280mm – 390mm',
+    tempTrend: '+1.4°C Warming Pulses',
+    riskLevel: 'Moisture Deficit / Rapid Evaporation',
+    advice: 'Focus on short-duration, drought-tolerant varieties that complete grain-filling before early rain cessation.',
+    crops: [
+      {
+        name: 'Sorghum',
+        variety: 'IESV 92043 DL (Climate-Smart)',
+        categoryTags: ['Extreme Heat Tolerance', 'Drought-Proof', 'High Biomass'],
+        window: 'Early October – Mid Nov',
+        waterNeed: 'Low',
+        irrigation: 'Rainfed / Supplementary',
+        baseMatch: 98,
+        climateBenefit: 'Deep root architecture captures subsoil moisture even during 3-week dry inter-spells.'
+      },
+      {
+        name: 'Maize',
+        variety: 'DK 8031 (Drought Hybrid)',
+        categoryTags: ['85-Day Maturity', 'Low Moisture Requirement', 'Pest Hardy'],
+        window: 'October 1 – October 25',
+        waterNeed: 'Medium-Low',
+        irrigation: 'Rainfed',
+        baseMatch: 90,
+        climateBenefit: 'Matures 20 days faster than standard varieties, avoiding late-season moisture drop.'
+      },
+      {
+        name: 'Sweet Potatoes',
+        variety: 'VITA (Orange-Fleshed)',
+        categoryTags: ['Heat Resilient', 'Nutritional Security', 'Ground Cover'],
+        window: 'Mid October – November',
+        waterNeed: 'Low',
+        irrigation: 'Rainfed / Ridging',
+        baseMatch: 95,
+        climateBenefit: 'Thrives in thermal spikes; vine growth acts as natural living mulch protecting soil moisture.'
+      },
+      {
+        name: 'Tomatoes',
+        variety: 'Eden F1 (Heat Resistant)',
+        categoryTags: ['Heat-Set Fruit', 'Drip Optimised', 'High Cash Yield'],
+        window: 'October – Early November',
+        waterNeed: 'Medium',
+        irrigation: 'Precision Drip',
+        baseMatch: 86,
+        climateBenefit: 'Maintains flower set during high daytime heat stress (+32°C peak).'
+      }
+    ]
+  },
+
+  'dry-season': {
+    title: '☀️ Dry & Drought-Risk Season (June – September)',
+    prediction: 'Extended dry spell with intense solar radiation and high evapotranspiration rates. Surface water depletion expected across lowland zones.',
+    rainfall: '< 150mm (Sparse)',
+    tempTrend: '+1.8°C Peak Thermal Index',
+    riskLevel: 'High Drought & Water Stress',
+    advice: 'Plant root crops and minimal water consumers. Utilize drip irrigation, zero-tillage, and heavy organic mulching.',
+    crops: [
+      {
+        name: 'Cassava',
+        variety: 'Tajirika (Drought Hardy)',
+        categoryTags: ['Zero Irrigation Needed', 'High Starch', 'Soil Adaptable'],
+        window: 'June – July',
+        waterNeed: 'Very Low',
+        irrigation: 'Rainfed (Minimal)',
+        baseMatch: 97,
+        climateBenefit: 'Enters dormancy during peak heat and resumes growth without yield penalty.'
+      },
+      {
+        name: 'Sorghum',
+        variety: 'Serena (Red Grain)',
+        categoryTags: ['Low Water Demand', 'Bird Resistant', 'Hardy Grain'],
+        window: 'Early June – Mid July',
+        waterNeed: 'Low',
+        irrigation: 'Rainfed / Furrow',
+        baseMatch: 94,
+        climateBenefit: 'Requires 40% less water than maize, thriving in arid soil conditions.'
+      },
+      {
+        name: 'Cowpeas',
+        variety: 'K80 (Dual Purpose)',
+        categoryTags: ['Drought Surviving', 'Fast Harvest', 'Soil Enricher'],
+        window: 'June – July',
+        waterNeed: 'Very Low',
+        irrigation: 'Rainfed',
+        baseMatch: 89,
+        climateBenefit: 'Yields both edible leaves and pods under extreme soil moisture restriction.'
+      },
+      {
+        name: 'Sweet Potatoes',
+        variety: 'KABODE (Hardy Tuber)',
+        categoryTags: ['Moisture Retentive', 'Long Storage', 'Drought Hardy'],
+        window: 'June – August',
+        waterNeed: 'Low',
+        irrigation: 'Furrow / Rainfed',
+        baseMatch: 91,
+        climateBenefit: 'Tubers store safely underground during dry spells, insulating harvest from heat.'
+      }
+    ]
+  },
+
+  'warming-scenario': {
+    title: '🌡️ +1.5°C Global Warming Climate Shift',
+    prediction: 'Long-term climate scenario modeling persistent thermal shifts (+1.5°C), erratic monsoon shifts, and elevated evaporation baseline across Kisumu.',
+    rainfall: 'Variable / Erratic Pulses',
+    tempTrend: '+1.5°C Sustained Rise',
+    riskLevel: 'Long-Term Ecosystem Shift',
+    advice: 'Transition farm strategy to climate-resilient staple crops, agroforestry, and closed-loop drip systems.',
+    crops: [
+      {
+        name: 'Sorghum',
+        variety: 'IESV 92043 (Climate Baseline Standard)',
+        categoryTags: ['Climate Change Proof', 'C4 Photosynthesis', 'High Security'],
+        window: 'Flexible Planting Windows',
+        waterNeed: 'Low',
+        irrigation: 'Rainfed / Drip',
+        baseMatch: 99,
+        climateBenefit: 'C4 metabolic pathway utilizes elevated CO2 and heat with maximum water efficiency.'
+      },
+      {
+        name: 'Cassava',
+        variety: 'Tajirika (Climate Anchor)',
+        categoryTags: ['Climate Anchor Crop', 'High Thermal Ceiling', 'Resilient'],
+        window: 'Year-Round Flexibility',
+        waterNeed: 'Very Low',
+        irrigation: 'Rainfed',
+        baseMatch: 96,
+        climateBenefit: 'Serves as primary food security fallback against severe multi-year climate anomalies.'
+      },
+      {
+        name: 'Sweet Potatoes',
+        variety: 'VITA (Climate Smart)',
+        categoryTags: ['Thermal Buffer', 'High Nutrient Yield', 'Soil Cover'],
+        window: 'Bi-Annual Planting',
+        waterNeed: 'Low',
+        irrigation: 'Drip / Rainfed',
+        baseMatch: 93,
+        climateBenefit: 'Prevents soil temperature spikes by creating dense ground shading.'
+      },
+      {
+        name: 'Rice',
+        variety: 'NERICA Upland 4',
+        categoryTags: ['Low-Water Paddy Alternative', 'Heat Tolerance', 'Staple'],
+        window: 'Shifted Rainy Windows',
+        waterNeed: 'Medium',
+        irrigation: 'Rainfed / Controlled Drip',
+        baseMatch: 91,
+        climateBenefit: 'Replaces traditional flooded paddy rice, slashing water consumption by 65%.'
+      }
+    ]
+  }
+};
+
+let currentSeasonKey = 'long-rains';
+
+function initBestPlantingModal() {
+  const modal       = document.getElementById('best-planting-modal');
+  const heroCta     = document.getElementById('hero-cta-primary');
+  const advisorBtn  = document.getElementById('open-best-planting-btn');
+  const closeBtn    = document.getElementById('modal-close-btn');
+  const doneBtn     = document.getElementById('modal-done-btn');
+  const seasonPills = document.querySelectorAll('.season-pill');
+  const locSelect   = document.getElementById('modal-location-select');
+
+  if (!modal) return;
+
+  function openModal() {
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    renderBestPlantingModal(currentSeasonKey, locSelect.value);
+  }
+
+  function closeModal() {
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  // Hero CTA button event listener
+  if (heroCta) {
+    heroCta.addEventListener('click', (e) => {
+      e.preventDefault();
+      openModal();
+    });
+  }
+
+  // Advisor Card CTA button
+  if (advisorBtn) {
+    advisorBtn.addEventListener('click', openModal);
+  }
+
+  // Close handlers
+  if (closeBtn) closeBtn.addEventListener('click', closeModal);
+  if (doneBtn)  doneBtn.addEventListener('click', closeModal);
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('active')) closeModal();
+  });
+
+  // Season Pill Selection
+  seasonPills.forEach(pill => {
+    pill.addEventListener('click', function () {
+      seasonPills.forEach(p => p.classList.remove('active'));
+      this.classList.add('active');
+      currentSeasonKey = this.dataset.season;
+      renderBestPlantingModal(currentSeasonKey, locSelect.value);
+    });
+  });
+
+  // Location Dropdown Change inside Modal
+  if (locSelect) {
+    locSelect.addEventListener('change', () => {
+      renderBestPlantingModal(currentSeasonKey, locSelect.value);
+    });
+  }
+}
+
+function renderBestPlantingModal(seasonKey, locationName) {
+  const data = CLIMATE_SEASON_DATA[seasonKey];
+  if (!data) return;
+
+  const locData = LOCATION_DATA[locationName] || { avg_pH: 6.0, avg_slope: 4 };
+
+  // 1. Update Climate Summary Card
+  const summaryCard = document.getElementById('climate-summary-card');
+  summaryCard.innerHTML = `
+    <div class="climate-summary-title">
+      ${data.title}
+    </div>
+    <div class="climate-summary-text">
+      ${data.prediction}
+    </div>
+    <div class="climate-meta-grid">
+      <div class="climate-meta-item">
+        <div class="climate-meta-label">Expected Rainfall</div>
+        <div class="climate-meta-val">${data.rainfall}</div>
+      </div>
+      <div class="climate-meta-item">
+        <div class="climate-meta-label">Temp Anomaly</div>
+        <div class="climate-meta-val" style="color:var(--amber);">${data.tempTrend}</div>
+      </div>
+      <div class="climate-meta-item">
+        <div class="climate-meta-label">Climate Risk</div>
+        <div class="climate-meta-val" style="color:var(--green);">${data.riskLevel}</div>
+      </div>
+      <div class="climate-meta-item">
+        <div class="climate-meta-label">Location Soil/Slope</div>
+        <div class="climate-meta-val">${locationName} (pH ${locData.avg_pH}, ${locData.avg_slope}°)</div>
+      </div>
+    </div>
+  `;
+
+  // 2. Render Crop Cards Grid
+  const countBadge = document.getElementById('recommended-count');
+  countBadge.textContent = `${data.crops.length} Suitable Varieties Recommended`;
+
+  const cropsGrid = document.getElementById('crops-grid');
+  cropsGrid.innerHTML = '';
+
+  data.crops.forEach(crop => {
+    const logic = CROP_LOGIC[crop.name] || { min_pH: 5.5, max_pH: 7.0, max_slope: 12 };
+    
+    // Adjust match percentage according to location soil pH and slope suitability
+    let match = crop.baseMatch;
+    if (locData.avg_pH < logic.min_pH || locData.avg_pH > logic.max_pH) match -= 8;
+    if (locData.avg_slope > logic.max_slope) match -= 12;
+    match = Math.max(70, Math.min(99, match));
+
+    const card = document.createElement('div');
+    card.className = 'crop-card';
+    card.innerHTML = `
+      <div class="crop-card-top">
+        <div class="crop-card-header">
+          <div>
+            <div class="crop-name">${crop.name}</div>
+            <div class="crop-variety">${crop.variety}</div>
+          </div>
+          <span class="crop-match-badge ${match >= 90 ? 'high' : 'mod'}">${match}% Match</span>
+        </div>
+        <div class="crop-tags">
+          ${crop.categoryTags.map(t => `<span class="crop-tag">${t}</span>`).join('')}
+        </div>
+        <div class="crop-details-list">
+          <div class="crop-detail-row">
+            <span class="crop-detail-key">Planting Window:</span>
+            <span class="crop-detail-val">${crop.window}</span>
+          </div>
+          <div class="crop-detail-row">
+            <span class="crop-detail-key">Water Need:</span>
+            <span class="crop-detail-val">${crop.waterNeed}</span>
+          </div>
+          <div class="crop-detail-row">
+            <span class="crop-detail-key">Irrigation:</span>
+            <span class="crop-detail-val">${crop.irrigation}</span>
+          </div>
+        </div>
+        <div class="climate-benefit-box">
+          <strong>💡 Climate Advantage:</strong> ${crop.climateBenefit}
+        </div>
+      </div>
+      <button class="crop-select-btn" data-crop="${crop.name}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Select for Field Suitability Test
+      </button>
+    `;
+
+    // Attach click handler on "Select for Field Suitability Test" button inside card
+    card.querySelector('.crop-select-btn').addEventListener('click', function () {
+      const selectedCropName = this.dataset.crop;
+      const modal = document.getElementById('best-planting-modal');
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+
+      // Scroll to Crop Advisor Section
+      const advisorSection = document.getElementById('crop-advisor');
+      if (advisorSection) {
+        advisorSection.scrollIntoView({ behavior: 'smooth' });
+      }
+
+      // Pre-select crop and location in the main advisor card
+      const cropSelect = document.getElementById('crop-select');
+      const locSelect  = document.getElementById('location-select');
+      if (cropSelect) cropSelect.value = selectedCropName;
+      if (locSelect)  locSelect.value  = locationName;
+
+      // Trigger suitability check automatically
+      setTimeout(() => {
+        const checkBtn = document.getElementById('check-suitability-btn');
+        if (checkBtn) checkBtn.click();
+      }, 500);
+    });
+
+    cropsGrid.appendChild(card);
+  });
+}
+
