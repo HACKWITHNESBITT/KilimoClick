@@ -1,0 +1,23 @@
+{
+  "soil_texture": {
+    "1": "Clay",
+    "2": "Silty Clay",
+    "3": "Sandy Clay",
+    "4": "Clay Loam",
+    "5": "Silty Clay Loam",
+    "6": "Sandy Clay Loam",
+    "7": "Loam",
+    "8": "Silty Loam",
+    "9": "Sandy Loam",
+    "10": "Silt",
+    "11": "Loamy Sand",
+    "12": "Sand",
+    "0": "Water / No Data"
+  },
+  "esa_worldcover": {
+    "40": "Cropland",
+    "20": "Trees",
+    "30": "Shrubland",
+    "80": "Water"
+  }
+}
