@@ -360,3 +360,113 @@ def _format_day_label(value) -> str:
     if not d:
         return str(value)
     return d.strftime("%A %d %b")
+
+# --------------------------------------------------------------------------
+# Core recommendation logic — shared by /recommend and /ussd
+# --------------------------------------------------------------------------
+
+
+def build_recommendation(lat: float, lon: float) -> dict:
+    error = validate_coordinates(lat, lon)
+    if error:
+        return {"error": error}
+
+    landcover = get_pixel_value(RASTERS["landcover"], lat, lon)
+    if landcover is None:
+        return {"error": "No data available for this location. Try a point inside the Kisumu area."}
+    if int(landcover) != CROPLAND_PIXEL_VALUE:
+        return {"error": "This point is not mapped as cropland. Please select a farm plot."}
+
+    ph = get_pixel_value(RASTERS["soil_ph"], lat, lon)
+    clay = get_pixel_value(RASTERS["soil_clay"], lat, lon)
+    slope = get_pixel_value(RASTERS["slope"], lat, lon)
+    elevation = get_pixel_value(RASTERS["dem"], lat, lon)
+    water_dist = get_pixel_value(RASTERS["water_distance"], lat, lon)
+    texture_code = get_pixel_value(RASTERS["soil_texture"], lat, lon)
+
+    if ph is None or slope is None:
+        return {"error": "Soil or terrain data unavailable for this point."}
+
+    ph = float(ph)
+    clay = float(clay) if clay is not None else None
+    slope = float(slope)
+    elevation = float(elevation) if elevation is not None else None
+    water_dist = float(water_dist) if water_dist is not None else None
+    texture_name = CODES["soil_texture"].get(str(int(texture_code)) if texture_code is not None else "0", "Unknown")
+
+    suitable_crops = []
+    for crop, rules in CROP_LOGIC.items():
+        if rules["min_pH"] <= ph <= rules["max_pH"] and slope <= rules["max_slope"]:
+            irrigation_method = _resolve_irrigation_method(rules, slope, water_dist)
+            suitable_crops.append(
+                {
+                    "name": crop,
+                    "irrigation_method": irrigation_method,
+                    "water_need": rules["water_need"],
+                }
+            )
+
+    response = {
+        "location": {"lat": lat, "lon": lon},
+        "soil_data": {
+            "pH": round(ph, 1),
+            "clay_content_pct": round(clay, 1) if clay is not None else None,
+            "texture": texture_name,
+            "elevation_m": round(elevation, 1) if elevation is not None else None,
+        },
+        "terrain": {
+            "slope_degrees": round(slope, 1),
+            "distance_to_water_m": round(water_dist, 1) if water_dist is not None else None,
+        },
+        "recommendations": suitable_crops,
+    }
+
+    if not suitable_crops:
+        response["moisture_forecast"] = {"data_available": False, "reason": "No suitable crop found for this soil/slope combination."}
+        response["plant_now_check"] = {"status": "unknown", "message": "No crop recommendation to evaluate for this point."}
+        return response
+
+    primary_crop = suitable_crops[0]
+    moisture_threshold = WATER_NEED_MOISTURE_THRESHOLD.get(
+        primary_crop["water_need"], DEFAULT_MOISTURE_THRESHOLD
+    )
+
+    forecast = fetch_forecast(lat, lon)
+    if forecast is None:
+        response["moisture_forecast"] = {
+            "data_available": False,
+            "reason": "forecast unavailable — showing crop recommendation only",
+        }
+        response["plant_now_check"] = {
+            "status": "unknown",
+            "message": "Plant-now safety check unavailable without a live forecast.",
+        }
+    else:
+        response["moisture_forecast"] = compute_moisture_forecast(forecast, moisture_threshold)
+        response["plant_now_check"] = compute_plant_now_status(
+            forecast, moisture_threshold, primary_crop["name"]
+        )
+
+    return response
+
+
+def _resolve_irrigation_method(rules: dict, slope: float, water_dist: Optional[float]) -> str:
+    """Turn a crop's free-text irrigation_rule + terrain into one method label."""
+    rule_text = rules.get("irrigation_rule", "")
+
+    if "Flood" in rule_text:
+        # Flood irrigation isn't practical on steep ground regardless of the crop rule.
+        if slope > 8:
+            return "Sprinkler (flood irrigation not advised above 8° slope)"
+        return "Flood"
+    if "Drip" in rule_text:
+        return "Drip"
+    if "Sprinkler" in rule_text and "slope > 8" in rule_text:
+        return "Sprinkler" if slope > 8 else "Rain-fed"
+    if "Rainfed" in rule_text or "Rain-fed" in rule_text:
+        return "Rain-fed"
+
+    # Fallback: use water distance as a feasibility signal.
+    if water_dist is not None and water_dist > 1000:
+        return "Rain-fed"
+    return "Rain-fed"
