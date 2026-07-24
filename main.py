@@ -18,13 +18,14 @@ GIS_DATA_DIR = os.getenv("GIS_DATA_DIR", "AgriNode_GIS_Data")
 
 KIJANISPACE_BASE_URL = os.getenv("KIJANISPACE_BASE_URL", "").rstrip("/")
 KIJANISPACE_FORECAST_PATH = os.getenv(
-    "KIJANISPACE_FORECAST_PATH", "/agro_climate/land"
+    "KIJANISPACE_FORECAST_PATH", "/v1/agro_climate/land"
 )
-KIJANISPACE_AUTH_TYPE = os.getenv("KIJANISPACE_AUTH_TYPE", "api_key")  # "api_key" | "basic"
+KIJANISPACE_WATER_PATH = os.getenv(
+    "KIJANISPACE_WATER_PATH", "/v1/agro_climate/water"
+)
+
+KIJANISPACE_AUTH_TYPE = os.getenv("KIJANISPACE_AUTH_TYPE", "api_key_header")
 KIJANISPACE_API_KEY = os.getenv("KIJANISPACE_API_KEY", "")
-KIJANISPACE_API_KEY_HEADER = os.getenv("KIJANISPACE_API_KEY_HEADER", "X-API-Key")
-KIJANISPACE_BASIC_USER = os.getenv("KIJANISPACE_BASIC_USER", "")
-KIJANISPACE_BASIC_PASS = os.getenv("KIJANISPACE_BASIC_PASS", "")
 KIJANISPACE_TIMEOUT_SECONDS = float(os.getenv("KIJANISPACE_TIMEOUT_SECONDS", "5"))
 
 FORECAST_CACHE_TTL_SECONDS = int(os.getenv("FORECAST_CACHE_TTL_SECONDS", "3600"))
@@ -185,19 +186,20 @@ def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
 
     url = f"{KIJANISPACE_BASE_URL}{KIJANISPACE_FORECAST_PATH}"
     headers = {}
-    auth = None
+    params = {"lat": lat, "lon": lon}
 
-    if KIJANISPACE_AUTH_TYPE == "basic":
-        auth = (KIJANISPACE_BASIC_USER, KIJANISPACE_BASIC_PASS)
+    if KIJANISPACE_AUTH_TYPE == "bearer":
+        headers["Authorization"] = f"Bearer {KIJANISPACE_API_KEY}"
+    elif KIJANISPACE_AUTH_TYPE == "api_key_query":
+        params["api_key"] = KIJANISPACE_API_KEY
     else:
-        headers[KIJANISPACE_API_KEY_HEADER] = KIJANISPACE_API_KEY
+        headers["X-API-Key"] = KIJANISPACE_API_KEY
 
     try:
         response = requests.get(
             url,
-            params={"lat": lat, "lon": lon, "days": 5},
+            params=params,
             headers=headers,
-            auth=auth,
             timeout=KIJANISPACE_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
@@ -214,39 +216,117 @@ def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
 def _normalize_forecast(payload: dict) -> dict:
     """Map the raw KijaniSpace response into the shape this backend expects.
 
-    KijaniSpace's exact response schema isn't in the hand-off docs, so this
-    normalizer accepts a couple of reasonable shapes (a top-level "series" or
-    "forecast" list of daily records) and fails loudly (raises) on anything
-    else, which fetch_forecast() turns into a clean "forecast unavailable".
-    Adjust the field-name candidates below once the live schema is confirmed.
+    Confirmed against a real /v1/agro_climate/land response (sample JSON):
+      - The hourly series lives at payload["forecast_data"], and it's
+        COLUMNAR, not a list of per-hour records: forecast_data["time"] is
+        a list of "YYYY-MM-DD hh:mm" strings, and every other field
+        (forecast_data["soilmoisture_0to10cm"], etc.) is a same-length list
+        aligned to it by index. A sample response had 121 hourly points
+        (5 days x 24h + 1).
+      - soilmoisture_0to10cm and precipitation_probability are both integer
+        percent values (e.g. 19, 20 / 0-50), matching their "percent" /
+        "volumetric percent" labels in the top-level "units" dict — both
+        get divided by 100 here so the rest of the backend works in 0-1
+        fractions throughout.
+      - payload["data"]["vegetation_indices"] (NDVI etc.) and
+        payload["data"]["dataset"] (land-use) are also present but unused —
+        out of scope for this app, which already has its own land-cover
+        raster from Phase 1.
+
+    Hourly values are aggregated into up to 5 daily buckets: soil_moisture
+    -> minimum for the day (worst case for "will it drop below threshold"),
+    precipitation_probability -> maximum for the day (worst case for
+    wash-out risk).
     """
-    series_raw = payload.get("series") or payload.get("forecast") or payload.get("daily") or []
-    if not series_raw:
-        raise ValueError("Forecast response had no recognizable daily series.")
+    forecast_data = payload.get("forecast_data")
+    if not forecast_data or not forecast_data.get("time"):
+        raise ValueError("Forecast response had no forecast_data.time series.")
 
-    def pick(record: dict, *keys, default=None):
-        for key in keys:
-            if key in record:
-                return record[key]
-        return default
+    units = payload.get("units", {})
+    daily = _aggregate_hourly_columns_to_daily(forecast_data, units)
+    if not daily:
+        raise ValueError("Forecast response's forecast_data produced no daily buckets.")
 
-    series = []
-    for record in series_raw[:5]:
-        series.append(
+    return {"five_day_series": daily}
+
+
+def _maybe_to_fraction(value: Optional[float], unit_label: str) -> Optional[float]:
+    """Scale a percent-labelled value (0-100) down to a 0-1 fraction.
+
+    The decision logic (compute_moisture_forecast / compute_plant_now_status)
+    works in 0-1 fractions throughout. KijaniSpace's declared units mark
+    soil moisture as "volumetric percent" and precipitation_probability as
+    "percent" — both 0-100 scales, confirmed by real sample values like
+    soilmoisture_0to10cm=19 and precipitation_probability=20 — so this
+    converts based on the declared label rather than guessing from magnitude.
+    """
+    if value is None:
+        return None
+    if unit_label and "percent" in unit_label.lower():
+        return value / 100.0
+    return value
+
+
+def _aggregate_hourly_columns_to_daily(forecast_data: dict, units: dict) -> list:
+    from collections import defaultdict
+
+    times = forecast_data.get("time") or []
+    moisture_col = forecast_data.get("soilmoisture_0to10cm") or []
+    rain_col = forecast_data.get("precipitation_probability") or []
+    et_col = forecast_data.get("evapotranspiration") or []
+    temp_col = forecast_data.get("soiltemperature_0to10cm") or []
+
+    moisture_unit = units.get("soilmoisture_0to10cm", "")
+    rain_unit = units.get("precipitation_probability", "")
+
+    def col_value(column: list, i: int):
+        return column[i] if i < len(column) else None
+
+    buckets: dict = defaultdict(lambda: {"moisture": [], "rain": [], "et": [], "temp": []})
+
+    for i, time_value in enumerate(times):
+        if not time_value:
+            continue
+        day = str(time_value)[:10]
+        bucket = buckets[day]
+
+        moisture = _maybe_to_fraction(col_value(moisture_col, i), moisture_unit)
+        if moisture is not None:
+            bucket["moisture"].append(moisture)
+
+        rain = _maybe_to_fraction(col_value(rain_col, i), rain_unit)
+        if rain is not None:
+            bucket["rain"].append(rain)
+
+        et = col_value(et_col, i)
+        if et is not None:
+            bucket["et"].append(et)
+
+        temp = col_value(temp_col, i)
+        if temp is not None:
+            bucket["temp"].append(temp)
+
+    daily = []
+    # Only keep full (or near-full) days, in case the first/last bucket is a
+    # partial day at the edge of the forecast window (e.g. a lone 00:00 point).
+    for day in sorted(buckets.keys()):
+        bucket = buckets[day]
+        if len(bucket["moisture"]) < 12 and len(bucket["rain"]) < 12:
+            continue  # too few hourly points to trust this day's aggregate
+        daily.append(
             {
-                "date": pick(record, "date", "day", "valid_date"),
-                "soil_moisture": pick(record, "soil_moisture", "soilMoisture"),
-                "precipitation_probability": pick(
-                    record, "precipitation_probability", "precipitationProbability"
-                ),
-                "evapotranspiration": pick(record, "evapotranspiration", "et0"),
-                "soil_temperature": pick(record, "soil_temperature", "soilTemperature"),
+                "date": day,
+                "soil_moisture": min(bucket["moisture"]) if bucket["moisture"] else None,
+                "precipitation_probability": max(bucket["rain"]) if bucket["rain"] else None,
+                "evapotranspiration": sum(bucket["et"]) if bucket["et"] else None,
+                "soil_temperature": (sum(bucket["temp"]) / len(bucket["temp"])) if bucket["temp"] else None,
             }
         )
+        if len(daily) == 5:
+            break
 
-    cloud_cover = payload.get("cloud_cover_percentage") or payload.get("cloudCoverPercentage")
+    return daily
 
-    return {"five_day_series": series, "cloud_cover_percentage": cloud_cover}
 
 # --------------------------------------------------------------------------
 # Deterministic decision logic (design doc, section 7)
