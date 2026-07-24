@@ -470,3 +470,117 @@ def _resolve_irrigation_method(rules: dict, slope: float, water_dist: Optional[f
     if water_dist is not None and water_dist > 1000:
         return "Rain-fed"
     return "Rain-fed"
+
+# --------------------------------------------------------------------------
+# Routes
+# --------------------------------------------------------------------------
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/recommend")
+def recommend(lat: float = Query(...), lon: float = Query(...)):
+    return build_recommendation(lat, lon)
+
+
+@app.post("/ussd")
+async def ussd(request: Request):
+    """Africa's Talking-style USSD webhook.
+
+    Africa's Talking posts application/x-www-form-urlencoded fields
+    (sessionId, phoneNumber, networkCode, serviceCode, text). This handler
+    also accepts a JSON body with the same field names, to match the sample
+    payload in the design doc and make local testing easy via /docs or curl.
+    """
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = await request.json()
+    else:
+        form = await request.form()
+        payload = dict(form)
+
+    text = (payload.get("text") or "").strip()
+    steps = [s for s in text.split("*") if s != ""]
+
+    screen = _ussd_menu(steps)
+    return Response(content=screen, media_type="text/plain")
+
+
+def _ussd_menu(steps: list[str]) -> str:
+    # Step 0: root menu
+    if len(steps) == 0:
+        return "CON Welcome to Agri-Node\n1. Get crop & irrigation advice\n2. Exit"
+
+    if steps[0] == "2":
+        return "END Thank you for using Agri-Node."
+
+    if steps[0] != "1":
+        return "END Invalid choice. Please dial in again."
+
+    # Step 1: location menu
+    if len(steps) == 1:
+        lines = ["CON Select your area:"]
+        for key in sorted(USSD_LOCATIONS, key=int):
+            lines.append(f"{key}. {USSD_LOCATIONS[key]['name']}")
+        lines.append(f"{len(USSD_LOCATIONS) + 1}. Type a landmark name")
+        return "\n".join(lines)
+
+    choice = steps[1]
+    free_text_option = str(len(USSD_LOCATIONS) + 1)
+
+    if choice == free_text_option:
+        if len(steps) == 2:
+            return "CON Enter the name of your nearest landmark:"
+        # len(steps) >= 3: free-text landmark typed, but this build has no
+        # geocoder wired up — fail clearly rather than guessing a location.
+        return (
+            "END Sorry, free-text landmark lookup isn't available yet. "
+            "Please dial in again and choose a listed area."
+        )
+
+    location = USSD_LOCATIONS.get(choice)
+    if not location:
+        return "END Invalid area selected. Please dial in again."
+
+    result = build_recommendation(location["lat"], location["lon"])
+    return "END " + _format_ussd_result(result)
+
+
+def _format_ussd_result(result: dict) -> str:
+    if "error" in result:
+        return result["error"]
+
+    crops = result.get("recommendations") or []
+    if not crops:
+        return "No suitable crop found for this area right now."
+
+    crop = crops[0]
+    soil = result.get("soil_data", {})
+    moisture = result.get("moisture_forecast", {})
+    plant_now = result.get("plant_now_check", {})
+
+    lines = [
+        f"Recommended: {crop['name']} ({crop['irrigation_method']})",
+        f"Soil: {soil.get('texture', 'Unknown')}, pH {soil.get('pH', '?')}",
+    ]
+
+    if moisture.get("data_available") and moisture.get("irrigate_by"):
+        lines.append(f"Irrigate by: {_format_day_label(moisture['irrigate_by'])}")
+    elif moisture.get("data_available"):
+        lines.append("Irrigate by: not needed this week")
+    else:
+        lines.append("Forecast: unavailable")
+
+    status = plant_now.get("status")
+    status_label = {
+        "safe": "OK TO PLANT NOW",
+        "wait": "WAIT - irrigate first",
+        "hold_off": "HOLD OFF - heavy rain risk",
+        "unknown": "STATUS UNKNOWN - no forecast",
+    }.get(status, "STATUS UNKNOWN")
+    lines.append(f"Status: {status_label}")
+
+    return "\n".join(lines)
