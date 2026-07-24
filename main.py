@@ -247,3 +247,116 @@ def _normalize_forecast(payload: dict) -> dict:
     cloud_cover = payload.get("cloud_cover_percentage") or payload.get("cloudCoverPercentage")
 
     return {"five_day_series": series, "cloud_cover_percentage": cloud_cover}
+
+# --------------------------------------------------------------------------
+# Deterministic decision logic (design doc, section 7)
+# --------------------------------------------------------------------------
+
+
+def _parse_date(value) -> Optional[date]:
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def compute_moisture_forecast(forecast: dict, moisture_threshold: float) -> dict:
+    series = forecast.get("five_day_series", [])
+
+    irrigate_by = None
+    reason = "Soil moisture is projected to stay above the crop's minimum threshold this week."
+
+    for day in series:
+        moisture = day.get("soil_moisture")
+        if moisture is None:
+            continue
+        if moisture < moisture_threshold:
+            irrigate_by = day.get("date")
+            day_label = _format_day_label(day.get("date"))
+            reason = (
+                f"Soil moisture is projected to drop below the crop's threshold by {day_label}."
+            )
+            break
+
+    result = {
+        "data_available": True,
+        "irrigate_by": irrigate_by,
+        "reason": reason,
+        "five_day_series": series,
+    }
+
+    cloud_cover = forecast.get("cloud_cover_percentage")
+    if cloud_cover is not None and cloud_cover >= STALE_CLOUD_COVER_THRESHOLD:
+        result["confidence"] = "low"
+        result["confidence_note"] = (
+            f"Underlying observation is {cloud_cover:.0f}% cloud-covered — "
+            "treat this forecast as indicative only."
+        )
+    else:
+        result["confidence"] = "high"
+
+    return result
+
+
+def compute_plant_now_status(
+    forecast: dict, moisture_threshold: float, crop_name: str
+) -> dict:
+    series = forecast.get("five_day_series", [])
+    if not series:
+        return {"status": "unknown", "message": "Not enough forecast data to judge planting safety."}
+
+    today = series[0]
+    next_two_days = series[:2]
+
+    max_rain_prob = 0.0
+    for day in next_two_days:
+        prob = day.get("precipitation_probability")
+        if prob is not None:
+            max_rain_prob = max(max_rain_prob, prob)
+
+    today_moisture = today.get("soil_moisture")
+
+    if max_rain_prob > HEAVY_RAIN_PROBABILITY_THRESHOLD:
+        return {
+            "status": "hold_off",
+            "message": (
+                "Heavy rain is likely in the next 48 hours — planting now risks "
+                "seed washout or waterlogging. Wait for the rain to pass."
+            ),
+        }
+
+    if today_moisture is not None and today_moisture < moisture_threshold:
+        next_good_day = None
+        for day in series[1:]:
+            moisture = day.get("soil_moisture")
+            rain = day.get("precipitation_probability") or 0.0
+            if moisture is not None and moisture >= moisture_threshold and rain <= HEAVY_RAIN_PROBABILITY_THRESHOLD:
+                next_good_day = day.get("date")
+                break
+        if next_good_day:
+            when = _format_day_label(next_good_day)
+            message = (
+                f"Soil moisture is currently low for {crop_name}. Irrigate first, "
+                f"or wait until conditions improve around {when}."
+            )
+        else:
+            message = (
+                f"Soil moisture is currently low for {crop_name}. Irrigate before planting."
+            )
+        return {"status": "wait", "message": message}
+
+    return {
+        "status": "safe",
+        "message": f"Conditions look good for {crop_name} — moisture is adequate and no heavy rain is imminent.",
+    }
+
+
+def _format_day_label(value) -> str:
+    d = _parse_date(value)
+    if not d:
+        return str(value)
+    return d.strftime("%A %d %b")
