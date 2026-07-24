@@ -160,3 +160,90 @@ def validate_coordinates(lat: float, lon: float) -> Optional[str]:
     if not (-180 <= lon <= 180):
         return "lon must be between -180 and 180."
     return None
+
+# --------------------------------------------------------------------------
+# KijaniSpace forecast adapter — the one new external integration
+# --------------------------------------------------------------------------
+
+
+def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
+    """Fetch the 5-day agro-climate forecast for (lat, lon).
+
+    Returns a dict with a "five_day_series" list of
+    {date, soil_moisture, precipitation_probability, evapotranspiration,
+    soil_temperature} and an optional "cloud_cover_percentage", or None if
+    the forecast can't be retrieved (missing config, network error, bad
+    response). Callers must treat None as "show crop recommendation only".
+    """
+    cached = _cache_get(lat, lon)
+    if cached is not None:
+        return cached
+
+    if not KIJANISPACE_BASE_URL:
+        logger.info("KIJANISPACE_BASE_URL not configured — forecast unavailable.")
+        return None
+
+    url = f"{KIJANISPACE_BASE_URL}{KIJANISPACE_FORECAST_PATH}"
+    headers = {}
+    auth = None
+
+    if KIJANISPACE_AUTH_TYPE == "basic":
+        auth = (KIJANISPACE_BASIC_USER, KIJANISPACE_BASIC_PASS)
+    else:
+        headers[KIJANISPACE_API_KEY_HEADER] = KIJANISPACE_API_KEY
+
+    try:
+        response = requests.get(
+            url,
+            params={"lat": lat, "lon": lon, "days": 5},
+            headers=headers,
+            auth=auth,
+            timeout=KIJANISPACE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        forecast = _normalize_forecast(payload)
+        _cache_set(lat, lon, forecast)
+        return forecast
+    except Exception as exc:
+        logger.warning("KijaniSpace forecast fetch failed for (%s, %s): %s", lat, lon, exc)
+        _cache_set(lat, lon, None)  # cache the miss too, so a flaky API doesn't get hammered
+        return None
+
+
+def _normalize_forecast(payload: dict) -> dict:
+    """Map the raw KijaniSpace response into the shape this backend expects.
+
+    KijaniSpace's exact response schema isn't in the hand-off docs, so this
+    normalizer accepts a couple of reasonable shapes (a top-level "series" or
+    "forecast" list of daily records) and fails loudly (raises) on anything
+    else, which fetch_forecast() turns into a clean "forecast unavailable".
+    Adjust the field-name candidates below once the live schema is confirmed.
+    """
+    series_raw = payload.get("series") or payload.get("forecast") or payload.get("daily") or []
+    if not series_raw:
+        raise ValueError("Forecast response had no recognizable daily series.")
+
+    def pick(record: dict, *keys, default=None):
+        for key in keys:
+            if key in record:
+                return record[key]
+        return default
+
+    series = []
+    for record in series_raw[:5]:
+        series.append(
+            {
+                "date": pick(record, "date", "day", "valid_date"),
+                "soil_moisture": pick(record, "soil_moisture", "soilMoisture"),
+                "precipitation_probability": pick(
+                    record, "precipitation_probability", "precipitationProbability"
+                ),
+                "evapotranspiration": pick(record, "evapotranspiration", "et0"),
+                "soil_temperature": pick(record, "soil_temperature", "soilTemperature"),
+            }
+        )
+
+    cloud_cover = payload.get("cloud_cover_percentage") or payload.get("cloudCoverPercentage")
+
+    return {"five_day_series": series, "cloud_cover_percentage": cloud_cover}
