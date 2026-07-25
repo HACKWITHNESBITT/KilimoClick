@@ -1,8 +1,10 @@
 import json
 import logging
+import math
 import os
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -12,6 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # --------------------------------------------------------------------------
 # Configuration (environment variables)
@@ -107,13 +110,23 @@ USSD_LOCATIONS = {
 # --------------------------------------------------------------------------
 
 _forecast_cache: dict[str, tuple[float, Optional[dict]]] = {}
+_NO_FORECAST = object()  # sentinel so a cached failure is distinguishable from "not cached at all"
+
+# Failed calls (expired token, KijaniSpace hiccup, etc.) are cached for a much
+# shorter time than successful ones. This avoids hammering a dead endpoint on
+# every map click, while still recovering quickly once the problem (e.g. an
+# expired token) is fixed and the server restarted — no need to wait out the
+# full 1-hour success TTL.
+FORECAST_FAILURE_CACHE_TTL_SECONDS = int(os.getenv("FORECAST_FAILURE_CACHE_TTL_SECONDS", "45"))
 
 
 def _cache_key(lat: float, lon: float) -> str:
     return f"{round(lat, FORECAST_CACHE_PRECISION)}:{round(lon, FORECAST_CACHE_PRECISION)}"
 
 
-def _cache_get(lat: float, lon: float) -> Optional[dict]:
+def _cache_get(lat: float, lon: float):
+    """Returns the cached forecast dict, _NO_FORECAST for a cached failure,
+    or None if there's simply nothing cached yet for this point."""
     entry = _forecast_cache.get(_cache_key(lat, lon))
     if not entry:
         return None
@@ -123,11 +136,9 @@ def _cache_get(lat: float, lon: float) -> Optional[dict]:
     return value
 
 
-def _cache_set(lat: float, lon: float, value: Optional[dict]) -> None:
-    _forecast_cache[_cache_key(lat, lon)] = (
-        time.time() + FORECAST_CACHE_TTL_SECONDS,
-        value,
-    )
+def _cache_set(lat: float, lon: float, value) -> None:
+    ttl = FORECAST_CACHE_TTL_SECONDS if value is not _NO_FORECAST else FORECAST_FAILURE_CACHE_TTL_SECONDS
+    _forecast_cache[_cache_key(lat, lon)] = (time.time() + ttl, value)
 
 
 # --------------------------------------------------------------------------
@@ -156,6 +167,37 @@ def get_pixel_value(tif_path: str, lat: float, lon: float):
         return None
 
 
+def get_slope_degrees(dem_path: str, lat: float, lon: float) -> Optional[float]:
+    """Estimate terrain slope from the 3×3 DEM neighbourhood at a point.
+
+    The supplied slope GeoTIFF is populated with near-90° values across the
+    AOI, which would rule out every crop. Deriving slope from the DEM keeps
+    the advisory tied to the provided GIS data while yielding usable terrain
+    values.
+    """
+    try:
+        with rasterio.open(dem_path) as src:
+            row, col = src.index(lon, lat)
+            if row < 1 or col < 1 or row >= src.height - 1 or col >= src.width - 1:
+                return None
+            window = rasterio.windows.Window(col - 1, row - 1, 3, 3)
+            elevations = src.read(1, window=window).astype(float)
+            if elevations.shape != (3, 3) or not all(math.isfinite(value) for value in elevations.flat):
+                return None
+            metres_per_lon_degree = 111_320 * math.cos(math.radians(lat))
+            metres_per_lat_degree = 110_540
+            dx = abs(src.transform.a) * metres_per_lon_degree
+            dy = abs(src.transform.e) * metres_per_lat_degree
+            if dx == 0 or dy == 0:
+                return None
+            dz_dx = (elevations[1, 2] - elevations[1, 0]) / (2 * dx)
+            dz_dy = (elevations[2, 1] - elevations[0, 1]) / (2 * dy)
+            return math.degrees(math.atan(math.hypot(dz_dx, dz_dy)))
+    except Exception as exc:  # pragma: no cover - defensive raster fallback
+        logger.warning("DEM slope calculation failed at (%s, %s): %s", lat, lon, exc)
+        return None
+
+
 def validate_coordinates(lat: float, lon: float) -> Optional[str]:
     if lat is None or lon is None:
         return "lat and lon are required."
@@ -180,6 +222,8 @@ def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
     response). Callers must treat None as "show crop recommendation only".
     """
     cached = _cache_get(lat, lon)
+    if cached is _NO_FORECAST:
+        return None
     if cached is not None:
         return cached
 
@@ -212,7 +256,7 @@ def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
         return forecast
     except Exception as exc:
         logger.warning("KijaniSpace forecast fetch failed for (%s, %s): %s", lat, lon, exc)
-        _cache_set(lat, lon, None)  # cache the miss too, so a flaky API doesn't get hammered
+        _cache_set(lat, lon, _NO_FORECAST)  # cache the miss too, but briefly — see FORECAST_FAILURE_CACHE_TTL_SECONDS
         return None
 
 
@@ -449,7 +493,9 @@ def _format_day_label(value) -> str:
 # --------------------------------------------------------------------------
 
 
-def build_recommendation(lat: float, lon: float) -> dict:
+def build_recommendation(
+    lat: float, lon: float, selected_crop: Optional[str] = None
+) -> dict:
     error = validate_coordinates(lat, lon)
     if error:
         return {"error": error}
@@ -462,7 +508,7 @@ def build_recommendation(lat: float, lon: float) -> dict:
 
     ph = get_pixel_value(RASTERS["soil_ph"], lat, lon)
     clay = get_pixel_value(RASTERS["soil_clay"], lat, lon)
-    slope = get_pixel_value(RASTERS["slope"], lat, lon)
+    slope = get_slope_degrees(RASTERS["dem"], lat, lon)
     elevation = get_pixel_value(RASTERS["dem"], lat, lon)
     water_dist = get_pixel_value(RASTERS["water_distance"], lat, lon)
     texture_code = get_pixel_value(RASTERS["soil_texture"], lat, lon)
@@ -470,7 +516,10 @@ def build_recommendation(lat: float, lon: float) -> dict:
     if ph is None or slope is None:
         return {"error": "Soil or terrain data unavailable for this point."}
 
-    ph = float(ph)
+    # The SoilGrids pH raster stores pH × 10 as an unsigned-byte integer
+    # (for example, 62 represents pH 6.2). Convert it before comparing with
+    # the crop matrix, whose rules use ordinary pH values.
+    ph = float(ph) / 10
     clay = float(clay) if clay is not None else None
     slope = float(slope)
     elevation = float(elevation) if elevation is not None else None
@@ -509,7 +558,14 @@ def build_recommendation(lat: float, lon: float) -> dict:
         response["plant_now_check"] = {"status": "unknown", "message": "No crop recommendation to evaluate for this point."}
         return response
 
-    primary_crop = suitable_crops[0]
+    # The web client can ask for the forecast and plant-now status for a
+    # particular crop. Keep the first recommendation as the sensible default
+    # for USSD and callers that do not provide one.
+    primary_crop = next(
+        (crop for crop in suitable_crops if crop["name"] == selected_crop),
+        suitable_crops[0],
+    )
+    response["advisory_crop"] = primary_crop["name"]
     moisture_threshold = WATER_NEED_MOISTURE_THRESHOLD.get(
         primary_crop["water_need"], DEFAULT_MOISTURE_THRESHOLD
     )
@@ -565,8 +621,12 @@ def health():
 
 
 @app.get("/recommend")
-def recommend(lat: float = Query(...), lon: float = Query(...)):
-    return build_recommendation(lat, lon)
+def recommend(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    crop: Optional[str] = Query(None),
+):
+    return build_recommendation(lat, lon, selected_crop=crop)
 
 
 @app.post("/ussd")
@@ -667,3 +727,10 @@ def _format_ussd_result(result: dict) -> str:
     lines.append(f"Status: {status_label}")
 
     return "\n".join(lines)
+
+
+# Serve the browser client from the API process.  Keeping the UI and API on
+# one origin removes the need for a separate dev server or CORS configuration
+# when running the project locally.
+FRONTEND_DIR = Path(__file__).resolve().parent / "forntend"
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

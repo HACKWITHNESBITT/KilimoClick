@@ -27,6 +27,53 @@ const LOCATION_DATA = {
   'Winam':          { avg_pH: 6.1, avg_slope: 2  },
 };
 
+// The API is served by main.py.  When the page is opened through FastAPI we
+// use its current origin; the localhost fallback also keeps standalone UI
+// development convenient.
+const API_BASE_URL = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+  ? window.location.origin
+  : 'http://localhost:8000';
+
+const LOCATION_COORDINATES = {
+  // These are nearby cropland pixels, not town-centre coordinates, so each
+  // preset can be evaluated by the raster-backed advisory service.
+  'Kisumu Central': { lat: -0.094292, lng: 34.766208 },
+  Ahono: { lat: -0.101792, lng: 34.763208 },
+  Kondele: { lat: -0.088292, lng: 34.773542 },
+  Manyatta: { lat: -0.105375, lng: 34.776125 },
+  Nyalenda: { lat: -0.119875, lng: 34.758125 },
+  Migosi: { lat: -0.080625, lng: 34.785042 },
+  'Kolwa East': { lat: -0.143792, lng: 34.820042 },
+  Winam: { lat: -0.165542, lng: 34.610375 },
+};
+
+let activeLocation = { name: 'Kisumu Central', ...LOCATION_COORDINATES['Kisumu Central'] };
+let latestRecommendation = null;
+
+function setActiveLocation(name, lat, lng) {
+  activeLocation = { name, lat: Number(lat), lng: Number(lng) };
+}
+
+function selectLocationByName(name) {
+  const coordinates = LOCATION_COORDINATES[name];
+  if (coordinates) setActiveLocation(name, coordinates.lat, coordinates.lng);
+}
+
+async function getRecommendation(crop) {
+  const endpoint = new URL('/recommend', API_BASE_URL);
+  endpoint.searchParams.set('lat', activeLocation.lat);
+  endpoint.searchParams.set('lon', activeLocation.lng);
+  if (crop) endpoint.searchParams.set('crop', crop);
+
+  const response = await fetch(endpoint);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error || 'The advisory service could not process this location.');
+  }
+  latestRecommendation = payload;
+  return payload;
+}
+
 // Kisumu region boundary (simplified polygon, EPSG:4326)
 const KISUMU_BOUNDARY = [
   [-0.340, 34.52], [-0.195, 34.47], [-0.048, 34.56],
@@ -106,14 +153,14 @@ function initHeroEntrance() {
 
 // Places database focused on Kisumu sub-counties, towns, villages, markets, and landmarks
 const MAP_PLACES = [
-  { name: 'Kisumu Central', lat: -0.092, lng: 34.768, type: 'Sub-County', pH: 6.2, slope: 3 },
-  { name: 'Ahono', lat: -0.101, lng: 34.763, type: 'Village / Farm Zone', pH: 5.8, slope: 5 },
-  { name: 'Kondele', lat: -0.089, lng: 34.772, type: 'Town Centre', pH: 6.0, slope: 4 },
-  { name: 'Manyatta', lat: -0.105, lng: 34.780, type: 'Agricultural Zone', pH: 5.7, slope: 6 },
-  { name: 'Nyalenda', lat: -0.118, lng: 34.760, type: 'Lowland Basin', pH: 6.3, slope: 3 },
-  { name: 'Migosi', lat: -0.078, lng: 34.785, type: 'Sub-Urban Zone', pH: 5.9, slope: 7 },
-  { name: 'Kolwa East', lat: -0.145, lng: 34.820, type: 'Hilly Farm Zone', pH: 5.5, slope: 9 },
-  { name: 'Winam', lat: -0.220, lng: 34.680, type: 'Lake Delta', pH: 6.1, slope: 2 },
+  { name: 'Kisumu Central', lat: -0.094292, lng: 34.766208, type: 'Sub-County Farm Zone', pH: 6.2, slope: 3 },
+  { name: 'Ahono', lat: -0.101792, lng: 34.763208, type: 'Village / Farm Zone', pH: 5.8, slope: 5 },
+  { name: 'Kondele', lat: -0.088292, lng: 34.773542, type: 'Town Farm Zone', pH: 6.0, slope: 4 },
+  { name: 'Manyatta', lat: -0.105375, lng: 34.776125, type: 'Agricultural Zone', pH: 5.7, slope: 6 },
+  { name: 'Nyalenda', lat: -0.119875, lng: 34.758125, type: 'Lowland Farm Zone', pH: 6.3, slope: 3 },
+  { name: 'Migosi', lat: -0.080625, lng: 34.785042, type: 'Sub-Urban Farm Zone', pH: 5.9, slope: 7 },
+  { name: 'Kolwa East', lat: -0.143792, lng: 34.820042, type: 'Hilly Farm Zone', pH: 5.5, slope: 9 },
+  { name: 'Winam', lat: -0.165542, lng: 34.610375, type: 'Lake Delta Farm Zone', pH: 6.1, slope: 2 },
   { name: 'Kisian', lat: -0.075, lng: 34.670, type: 'Highland Ridge', pH: 5.9, slope: 8 },
   { name: 'Maseno', lat: -0.005, lng: 34.600, type: 'Highland Zone', pH: 5.6, slope: 11 },
   { name: 'Otonglo', lat: -0.080, lng: 34.700, type: 'Mixed Farming', pH: 6.0, slope: 5 },
@@ -340,6 +387,7 @@ function initMap() {
 
   // Update Location Card Overlay
   function updateLocationCardOverlay(name, lat, lng, pH, slope, subcounty, isLive) {
+    setActiveLocation(name, lat, lng);
     document.getElementById('loc-status-badge').textContent = isLive ? '🟢 REAL-TIME GPS TRACKING' : '📍 PINPOINTED LOCATION';
     document.getElementById('loc-card-title').textContent   = name;
     document.getElementById('loc-card-coords').textContent  = `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
@@ -364,6 +412,10 @@ function initMap() {
           }
         }
       }
+
+      // A map pin may not correspond to one of the preset dropdown entries;
+      // its exact coordinates remain the source of truth for the API call.
+      setActiveLocation(name, lat, lng);
 
       // Scroll to Crop Advisor card
       const cropAdvisor = document.getElementById('crop-advisor');
@@ -600,35 +652,41 @@ function initMap() {
 // 5-DAY FORECAST
 // ============================================================
 function initForecast() {
-  const today = new Date();
-  const days  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const forecasts = [
-    { icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>',  stress: 'low',      pct: '18%',  label: 'Dry'  },
-    { icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>',  stress: 'low',      pct: '24%',  label: 'Mild' },
-    { icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16.5 16.5 15 18"/><path d="M21.5 16.5 20 18"/><path d="M11.5 16.5 10 18"/><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>', stress: 'high',     pct: '79%',  label: 'Wet'  },
-    { icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/><path d="M16 20h.01"/><path d="M12 20h.01"/><path d="M8 20h.01"/></svg>', stress: 'moderate', pct: '52%',  label: 'Mod'  },
-    { icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>',  stress: 'low',      pct: '21%',  label: 'Dry'  },
-  ];
-
   const grid = document.getElementById('forecast-grid');
+  grid.innerHTML = '<div class="fc-label">Choose a crop and field to load the live forecast.</div>';
+}
+
+function renderForecast(forecast) {
+  const grid = document.getElementById('forecast-grid');
+  const source = document.querySelector('.forecast-source');
+  if (!forecast?.data_available || !forecast.five_day_series?.length) {
+    grid.innerHTML = `<div class="fc-label">${forecast?.reason || 'Live forecast unavailable for this field.'}</div>`;
+    if (source) source.lastChild.textContent = ' Live climate data unavailable';
+    return;
+  }
+
   grid.innerHTML = '';
-
-  forecasts.forEach((f, i) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() + i);
-    const dayName = days[date.getDay()];
-
+  forecast.five_day_series.forEach(day => {
+    const date = new Date(`${day.date}T12:00:00`);
+    const moisture = Math.round((day.soil_moisture ?? 0) * 100);
+    const rain = Math.round((day.precipitation_probability ?? 0) * 100);
+    const stress = rain >= 60 ? 'high' : moisture < 20 ? 'moderate' : 'low';
+    const label = rain >= 60 ? 'Rain risk' : moisture < 20 ? 'Dry' : 'Stable';
     const el = document.createElement('div');
     el.className = 'forecast-day';
     el.innerHTML = `
-      <div class="fc-day-label">${dayName}</div>
-      <div class="fc-icon">${f.icon}</div>
-      <div class="fc-stress ${f.stress}"></div>
-      <div class="fc-pct">${f.pct}</div>
-      <div class="fc-label">${f.label}</div>
+      <div class="fc-day-label">${date.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+      <div class="fc-icon">${rain >= 40 ? '🌧️' : '☀️'}</div>
+      <div class="fc-stress ${stress}"></div>
+      <div class="fc-pct">${moisture}%</div>
+      <div class="fc-label">${label}</div>
     `;
+    el.title = `Soil moisture ${moisture}%; rain probability ${rain}%`;
     grid.appendChild(el);
   });
+  if (source) source.lastChild.textContent = forecast.confidence === 'low'
+    ? ` ${forecast.confidence_note}`
+    : ' Data from KijaniSpace live climate stream';
 }
 
 // ============================================================
@@ -748,7 +806,7 @@ function initCharts() {
 function initCropChecker() {
   const btn = document.getElementById('check-suitability-btn');
 
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const cropName = document.getElementById('crop-select').value;
     const locName  = document.getElementById('location-select').value;
 
@@ -757,83 +815,51 @@ function initCropChecker() {
       return;
     }
 
-    const logic   = CROP_LOGIC[cropName];
-    const locData = LOCATION_DATA[locName];
-    if (!logic || !locData) return;
-
-    // Calculate suitability score
-    let score    = 100;
-    let warnings = [];
-
-    const { avg_pH: pH, avg_slope: slope } = locData;
-
-    if (pH < logic.min_pH || pH > logic.max_pH) {
-      score -= 36;
-      warnings.push(`Soil pH (${pH}) is outside the optimal range ${logic.min_pH}–${logic.max_pH} for ${cropName}.`);
-    } else if (pH < logic.min_pH + 0.25 || pH > logic.max_pH - 0.25) {
-      score -= 12;
-      warnings.push(`Soil pH (${pH}) is near the edge of the optimal range.`);
+    selectLocationByName(locName);
+    btn.disabled = true;
+    const previousText = btn.lastChild.textContent;
+    btn.lastChild.textContent = ' Checking field data...';
+    try {
+      const recommendation = await getRecommendation(cropName);
+      renderRecommendation(recommendation, cropName, locName);
+      renderForecast(recommendation.moisture_forecast);
+      renderSafety(recommendation.plant_now_check);
+      showToast(`Live suitability check complete for ${cropName} in ${locName}.`, 'success');
+    } catch (error) {
+      showToast(error.message, 'warning');
+    } finally {
+      btn.disabled = false;
+      btn.lastChild.textContent = previousText;
     }
-
-    if (slope > logic.max_slope) {
-      score -= 42;
-      warnings.push(`Slope (${slope}°) exceeds the maximum (${logic.max_slope}°) recommended for ${cropName}.`);
-    } else if (slope > logic.max_slope * 0.75) {
-      score -= 14;
-    }
-
-    score = Math.max(0, Math.min(100, score));
-
-    // Show result panel
-    const resultPanel = document.getElementById('checker-result');
-    resultPanel.classList.remove('visible');
-    void resultPanel.offsetWidth; // reflow
-    resultPanel.classList.add('visible');
-
-    // Populate fields
-    const phOk    = pH >= logic.min_pH && pH <= logic.max_pH;
-    const slopeOk = slope <= logic.max_slope;
-    document.getElementById('result-ph').textContent     = `${logic.min_pH} – ${logic.max_pH}  ${phOk ? '✓' : '✗'}`;
-    document.getElementById('result-slope').textContent  = `Max ${logic.max_slope}°  ${slopeOk ? '✓' : '✗'}`;
-    document.getElementById('result-water').textContent  = logic.water_need;
-    document.getElementById('result-irrigation').textContent = logic.irrigation_rule;
-
-    // Animate score counter + bar
-    const scoreEl = document.getElementById('result-score');
-    const barEl   = document.getElementById('score-bar');
-    const dur     = 900;
-    const t0      = performance.now();
-
-    (function tick(ts) {
-      const p  = Math.min((ts - t0) / dur, 1);
-      const ep = 1 - Math.pow(1 - p, 3);
-      const v  = Math.round(score * ep);
-      scoreEl.textContent = v + '%';
-      barEl.style.width   = v + '%';
-      barEl.style.background =
-        v >= 70 ? 'linear-gradient(90deg, #1B5E20, #4ADE80)'
-                : v >= 40 ? 'linear-gradient(90deg, #78350f, #F59E0B)'
-                           : 'linear-gradient(90deg, #7f1d1d, #F87171)';
-      scoreEl.style.color =
-        v >= 70 ? 'var(--green)' : v >= 40 ? 'var(--amber)' : 'var(--red)';
-      if (p < 1) requestAnimationFrame(tick);
-    })(performance.now());
-
-    // Alert message
-    const alertEl = document.getElementById('result-alert');
-    if (warnings.length === 0) {
-      alertEl.innerHTML = `<svg style="display:inline;vertical-align:middle;margin-right:6px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Excellent! ${locName} is well-suited for ${cropName} cultivation.`;
-      alertEl.className = 'result-alert success';
-    } else if (score >= 40) {
-      alertEl.innerHTML = `<svg style="display:inline;vertical-align:middle;margin-right:6px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ${warnings[0]}`;
-      alertEl.className = 'result-alert warning';
-    } else {
-      alertEl.innerHTML = `<svg style="display:inline;vertical-align:middle;margin-right:6px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> ${warnings.join(' ')} Consider a different crop or location.`;
-      alertEl.className = 'result-alert danger';
-    }
-
-    showToast(`Suitability check complete for ${cropName} in ${locName}!`, score >= 70 ? 'success' : 'warning');
   });
+}
+
+function renderRecommendation(recommendation, cropName, locationName) {
+  const logic = CROP_LOGIC[cropName];
+  const crop = recommendation.recommendations.find(item => item.name === cropName);
+  const pH = recommendation.soil_data.pH;
+  const slope = recommendation.terrain.slope_degrees;
+  const suitable = Boolean(crop);
+  const resultPanel = document.getElementById('checker-result');
+  resultPanel.classList.add('visible');
+  document.getElementById('result-ph').textContent = `${pH} (target ${logic.min_pH}–${logic.max_pH}) ${pH >= logic.min_pH && pH <= logic.max_pH ? '✓' : '✗'}`;
+  document.getElementById('result-slope').textContent = `${slope}° (max ${logic.max_slope}°) ${slope <= logic.max_slope ? '✓' : '✗'}`;
+  document.getElementById('result-water').textContent = crop?.water_need || logic.water_need;
+  document.getElementById('result-irrigation').textContent = crop?.irrigation_method || 'Not recommended';
+  document.getElementById('result-score').textContent = suitable ? '100%' : '0%';
+  const bar = document.getElementById('score-bar');
+  bar.style.width = suitable ? '100%' : '0%';
+  bar.style.background = suitable ? 'linear-gradient(90deg, #1B5E20, #4ADE80)' : 'linear-gradient(90deg, #7f1d1d, #F87171)';
+  document.getElementById('result-score').style.color = suitable ? 'var(--green)' : 'var(--red)';
+  const alert = document.getElementById('result-alert');
+  alert.textContent = suitable
+    ? `${locationName} meets the live raster soil and terrain rules for ${cropName}.`
+    : `${locationName} does not meet the live raster soil and terrain rules for ${cropName}.`;
+  alert.className = `result-alert ${suitable ? 'success' : 'danger'}`;
+
+  // Reflect the returned raster values in the active map card as well.
+  document.getElementById('loc-card-ph').textContent = pH;
+  document.getElementById('loc-card-slope').textContent = `${slope}°`;
 }
 
 // ============================================================
@@ -967,42 +993,59 @@ function initCalendar() {
 // SAFETY CHECK
 // ============================================================
 function initSafetyCheck() {
-  document.getElementById('run-safety-check').addEventListener('click', function () {
+  document.getElementById('run-safety-check').addEventListener('click', async function () {
     const btn      = this;
     const icon     = document.getElementById('safety-icon');
     const badgeIds = ['badge-flood', 'badge-soil', 'badge-date'];
+    const crop = document.getElementById('crop-select').value;
 
-    // Loading state
+    if (!crop) {
+      showToast('Select a crop before running the plant-now safety check.', 'warning');
+      return;
+    }
+
     btn.disabled      = true;
     icon.style.animation = 'spin 0.8s linear infinite';
     btn.childNodes[btn.childNodes.length - 1].textContent = ' Checking...';
-
     badgeIds.forEach(id => {
       const el = document.getElementById(id);
       el.className   = 'check-badge warning';
       el.textContent = '...';
     });
 
-    // Staggered results
-    const results = [
-      { id: 'badge-flood', delay: 550,  cls: 'safe',    text: 'LOW'       },
-      { id: 'badge-soil',  delay: 1000, cls: 'safe',    text: 'READY'     },
-      { id: 'badge-date',  delay: 1500, cls: 'safe',    text: 'CONFIRMED' },
-    ];
-    results.forEach(({ id, delay, cls, text }) => {
-      setTimeout(() => {
+    try {
+      const recommendation = await getRecommendation(crop);
+      renderForecast(recommendation.moisture_forecast);
+      renderSafety(recommendation.plant_now_check);
+      showToast(recommendation.plant_now_check.message, recommendation.plant_now_check.status === 'safe' ? 'success' : 'warning');
+    } catch (error) {
+      badgeIds.forEach(id => {
         const el = document.getElementById(id);
-        el.className   = `check-badge ${cls}`;
-        el.textContent = text;
-      }, delay);
-    });
-
-    setTimeout(() => {
+        el.className = 'check-badge warning';
+        el.textContent = 'UNKNOWN';
+      });
+      showToast(error.message, 'warning');
+    } finally {
       icon.style.animation = '';
       btn.childNodes[btn.childNodes.length - 1].textContent = ' Run New Check';
       btn.disabled = false;
-      showToast('Safety check complete — All conditions are GO!', 'success');
-    }, 1900);
+    }
+  });
+}
+
+function renderSafety(check) {
+  const status = check?.status || 'unknown';
+  const values = {
+    safe: { flood: ['safe', 'LOW'], soil: ['safe', 'READY'], date: ['safe', 'GO'] },
+    wait: { flood: ['safe', 'LOW'], soil: ['warning', 'IRRIGATE'], date: ['warning', 'WAIT'] },
+    hold_off: { flood: ['danger', 'HIGH'], soil: ['warning', 'CHECK'], date: ['warning', 'WAIT'] },
+    unknown: { flood: ['warning', 'UNKNOWN'], soil: ['warning', 'UNKNOWN'], date: ['warning', 'UNKNOWN'] },
+  };
+  const current = values[status] || values.unknown;
+  [['badge-flood', current.flood], ['badge-soil', current.soil], ['badge-date', current.date]].forEach(([id, value]) => {
+    const el = document.getElementById(id);
+    el.className = `check-badge ${value[0]}`;
+    el.textContent = value[1];
   });
 }
 
@@ -1493,4 +1536,3 @@ function renderBestPlantingModal(seasonKey, locationName) {
     cropsGrid.appendChild(card);
   });
 }
-

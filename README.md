@@ -11,3 +11,14 @@
 
 ## 🛠️ Architecture
 Stateless, database-less computation engine. Every query maps a single location vector, reads underlying rasters, fetches live forecasts, applies rules, and exits.
+
+## Run locally
+
+The FastAPI app also serves the frontend, so only one process is required:
+
+```bash
+./.venv/bin/uvicorn main:app --reload
+```
+
+Open `http://127.0.0.1:8000`. The crop checker, map-pin analysis, five-day
+forecast, and plant-now safety check call `GET /recommend` from that same app.
