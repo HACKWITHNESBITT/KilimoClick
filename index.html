@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="KilimoClick Advisor — Smart crop and irrigation decisions for smallholder farmers in the Lake Victoria Basin, Kisumu, Kenya.">
+  <title>KilimoClick Advisor — Plant Right. Water on Time.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Result panel styles integrated into the sidebar card */
+    .result-card { margin-top: 0; }
+    .result-section { margin-bottom: 16px; }
+    .result-section-title {
+      font-size: 11px; font-weight: 700; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .crop-rec-item {
+      padding: 12px 14px; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: var(--r-sm);
+      margin-bottom: 8px; transition: border-color var(--t);
+    }
+    .crop-rec-item:hover { border-color: var(--border-hover); }
+    .crop-rec-name { font-weight: 700; color: var(--text-1); font-size: 14px; margin-bottom: 2px; }
+    .crop-rec-method { font-size: 12px; color: var(--green); font-weight: 600; margin-bottom: 4px; }
+    .crop-rec-water { font-size: 11.5px; color: var(--text-2); }
+    .meta-row-new {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12.5px; padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .meta-row-new:last-child { border-bottom: none; }
+    .meta-key { color: var(--text-3); }
+    .meta-val { font-weight: 600; color: var(--text-1); }
+    .status-badge-new {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; font-size: 13px;
+      font-weight: 700; margin-bottom: 8px;
+    }
+    .status-badge-new.safe { background: rgba(74,222,128,0.12); color: var(--green); border: 1px solid rgba(74,222,128,0.3); }
+    .status-badge-new.wait { background: rgba(245,158,11,0.12); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+    .status-badge-new.hold_off { background: rgba(248,113,113,0.12); color: var(--red); border: 1px solid rgba(248,113,113,0.3); }
+    .status-badge-new.unknown { background: rgba(255,255,255,0.06); color: var(--text-2); border: 1px solid var(--border); }
+    .sparkline-new { display: flex; align-items: flex-end; gap: 4px; height: 52px; margin: 10px 0 6px; }
+    .spark-bar-new {
+      flex: 1; background: linear-gradient(180deg, var(--green) 0%, var(--primary-light) 100%);
+      border-radius: 3px 3px 0 0; position: relative; min-height: 4px;
+      opacity: 0.8; transition: opacity var(--t);
+    }
+    .spark-bar-new:hover { opacity: 1; }
+    .spark-labels-new { display: flex; gap: 4px; }
+    .spark-labels-new span { flex: 1; text-align: center; font-size: 10px; color: var(--text-3); }
+    .confidence-note-new { font-size: 11.5px; color: var(--amber); display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+    .landcover-note-new {
+      background: rgba(245,158,11,0.08); border-left: 3px solid var(--amber);
+      padding: 8px 12px; border-radius: 4px; font-size: 12px;
+      color: var(--text-2); margin-top: 10px; line-height: 1.5;
+    }
+    .error-card {
+      background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.25);
+      border-radius: var(--r-sm); padding: 14px; font-size: 13px; color: var(--red);
+    }
+    .hint-text { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+    .waiting-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 14px; padding: 40px 20px; text-align: center;
+    }
+    .waiting-icon { font-size: 48px; opacity: 0.4; }
+    .sidebar-scroll { overflow-y: auto; max-height: calc(100vh - 66px); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    #map-wrapper { flex: 1; position: relative; min-height: 0; }
+    #map { height: 100%; width: 100%; background: #09151f; }
+    .app-layout { display: flex; height: calc(100vh - 66px); margin-top: 66px; }
+    .sidebar-panel {
+      width: 48%; min-width: 340px; background: var(--bg-2);
+      border-left: 1px solid var(--border); flex-shrink: 0;
+    }
+    @media (max-width: 768px) {
+      .app-layout { flex-direction: column; height: auto; }
+      .sidebar-panel { width: 100%; min-width: unset; border-left: none; border-top: 1px solid var(--border); }
+      #map-wrapper { height: 50vh; }
+    }
+    .loc-click-hint {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 500; background: rgba(9,21,32,0.88); backdrop-filter: blur(10px);
+      border: 1px solid var(--border); border-radius: 20px;
+      padding: 8px 18px; font-size: 12.5px; color: var(--text-2);
+      display: flex; align-items: center; gap: 7px; pointer-events: none;
+    }
+    .loading-overlay {
+      position: absolute; inset: 0; z-index: 800;
+      background: rgba(9,21,32,0.65); backdrop-filter: blur(4px);
+      display: none; align-items: center; justify-content: center;
+    }
+    .loading-overlay.active { display: flex; }
+    .loading-spinner {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 3px solid rgba(74,222,128,0.2);
+      border-top-color: var(--green);
+      animation: spin 0.8s linear infinite;
+    }
+    .sidebar-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+      background: var(--surface); position: sticky; top: 0; z-index: 10;
+    }
+    .sidebar-title { font-family: var(--font-head); font-size: 15px; font-weight: 700; color: var(--text-1); }
+    .sidebar-sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+  <!-- ===== NAVBAR ===== -->
+  <nav class="navbar" id="navbar">
+    <div class="nav-container">
+      <a href="#" class="nav-logo">
+        <svg class="logo-icon" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M18 32C18 32 8 22 8 13C8 7.48 12.48 3 18 3C23.52 3 28 7.48 28 13C28 22 18 32 18 32Z" fill="url(#lg1)"/>
+          <line x1="18" y1="3" x2="18" y2="32" stroke="#4ADE80" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="11" y1="11" x2="18" y2="16" stroke="#4ADE80" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="25" y1="11" x2="18" y2="16" stroke="#4ADE80" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="13" y1="17" x2="18" y2="21" stroke="#86EFAC" stroke-width="1.2" stroke-linecap="round"/>
+          <line x1="23" y1="17" x2="18" y2="21" stroke="#86EFAC" stroke-width="1.2" stroke-linecap="round"/>
+          <defs>
+            <linearGradient id="lg1" x1="8" y1="3" x2="28" y2="32" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#4ADE80"/>
+              <stop offset="100%" stop-color="#1B5E20"/>
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="logo-text">KilimoClick Advisor</span>
+      </a>
+
+      <button class="hamburger" id="hamburger" aria-label="Toggle menu">
+        <span></span><span></span><span></span>
+      </button>
+
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#" class="nav-link active">Map</a></li>
+        <li><a href="#" class="nav-link" id="nav-about-btn">About</a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <div class="hero-tag" style="margin-bottom:0; font-size:11.5px;">
+          <span class="pulse-dot small"></span>
+          Kisumu / Lake Victoria
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ===== MAIN APP LAYOUT ===== -->
+  <div class="app-layout">
+
+    <!-- MAP -->
+    <div id="map-wrapper">
+      <div id="map"></div>
+      <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner"></div>
+      </div>
+      <div class="loc-click-hint" id="loc-hint">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.4 7.05 11.5 7.35 11.76a1 1 0 0 0 1.3 0C12.95 21.5 20 15.4 20 10a8 8 0 0 0-8-8z"/></svg>
+        Click anywhere on the map to get a crop recommendation
+      </div>
+    </div>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar-panel">
+      <div class="sidebar-header">
+        <div class="sidebar-title">🌱 Field Advisor</div>
+        <div class="sidebar-sub">Plant Right · Water on Time</div>
+      </div>
+      <div class="sidebar-scroll" id="sidebar-scroll">
+        <div id="results">
+          <div class="waiting-state">
+            <div class="waiting-icon">📍</div>
+            <p class="hint-text">Click anywhere on the map over the Kisumu / Lake Victoria area to get a recommendation for that plot.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const API_BASE = window.location.origin;
+
+    // ── Navbar scroll effect ──
+    window.addEventListener('scroll', () => {
+      document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 10);
+    });
+
+    // ── Hamburger ──
+    document.getElementById('hamburger').addEventListener('click', () => {
+      document.getElementById('nav-links').classList.toggle('open');
+    });
+
+    // ── Map init ──
+    const map = L.map('map', { zoomControl: true }).setView([-0.0917, 34.7680], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let marker;
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const locHint = document.getElementById('loc-hint');
+
+    map.on('click', function (e) {
+      const lat = e.latlng.lat;
+      const lon = e.latlng.lng;
+
+      // Remove old marker, add new styled one
+      if (marker) map.removeLayer(marker);
+      marker = L.marker([lat, lon], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div class="uber-pin-wrapper"><div class="uber-pin-pulse"></div><div class="uber-pin-core"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.4 7.05 11.5 7.35 11.76a1 1 0 0 0 1.3 0C12.95 21.5 20 15.4 20 10a8 8 0 0 0-8-8z"/></svg></div></div>`,
+          iconSize: [44, 44], iconAnchor: [22, 22]
+        })
+      }).addTo(map);
+
+      locHint.style.display = 'none';
+      loadingOverlay.classList.add('active');
+      document.getElementById('results').innerHTML = '';
+
+      fetch(`${API_BASE}/recommend?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`)
+        .then(response => {
+          if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+          return response.json();
+        })
+        .then(data => {
+          loadingOverlay.classList.remove('active');
+          render(data, lat, lon);
+        })
+        .catch(err => {
+          loadingOverlay.classList.remove('active');
+          document.getElementById('results').innerHTML =
+            `<div class="error-card">⚠ Could not reach the backend. Is it running at <strong>${API_BASE}</strong>?<br><small style="opacity:0.7">${err.message}</small></div>`;
+        });
+    });
+
+    // ── Render function (preserves all original logic, new UI) ──
+    function render(data, lat, lon) {
+      const el = document.getElementById('results');
+
+      if (data.error) {
+        el.innerHTML = `<div class="error-card">${escapeHtml(data.error)}</div>`;
+        return;
+      }
+
+      const landcover = data.landcover || {};
+      let html = '';
+
+      // ── Location card ──
+      html += `
+        <div class="card" style="padding:14px 16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <span style="font-size:11px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:0.6px;">📍 Pinpointed Location</span>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-3);">Lat: ${lat.toFixed(5)}, Lng: ${lon.toFixed(5)}</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:rgba(0,0,0,0.25);padding:10px;border-radius:8px;margin-top:10px;border:1px solid rgba(255,255,255,0.05);">
+            <div style="text-align:center;"><div style="font-size:10px;color:var(--text-3);text-transform:uppercase;">pH</div><div style="font-size:13px;font-weight:700;color:var(--text-1);">${data.soil_data ? data.soil_data.pH : '—'}</div></div>
+            <div style="text-align:center;"><div style="font-size:10px;color:var(--text-3);text-transform:uppercase;">Slope</div><div style="font-size:13px;font-weight:700;color:var(--text-1);">${data.terrain ? data.terrain.slope_degrees + '°' : '—'}</div></div>
+            <div style="text-align:center;"><div style="font-size:10px;color:var(--text-3);text-transform:uppercase;">Texture</div><div style="font-size:13px;font-weight:700;color:var(--text-1);">${data.soil_data ? data.soil_data.texture : '—'}</div></div>
+          </div>
+        </div>`;
+
+      // ── Crop & Irrigation card ──
+      html += `<div class="card" style="padding:16px;">
+        <div class="card-header" style="margin-bottom:14px;">
+          <h3 class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            Crop & Irrigation
+          </h3>
+        </div>`;
+
+      if (!data.recommendations || data.recommendations.length === 0) {
+        html += `<p class="hint-text">No suitable crop found for this soil/slope combination.</p>`;
+      } else {
+        data.recommendations.forEach(c => {
+          html += `<div class="crop-rec-item">
+            <div class="crop-rec-name">${escapeHtml(c.name)}</div>
+            <div class="crop-rec-method">${escapeHtml(c.irrigation_method)}</div>
+            <div class="crop-rec-water">💧 Water need: ${escapeHtml(c.water_need)}</div>
+          </div>`;
+        });
+      }
+
+      if (data.soil_data) {
+        html += `<div style="margin-top:10px;">
+          <div class="meta-row-new"><span class="meta-key">Soil texture</span><span class="meta-val">${escapeHtml(data.soil_data.texture)}</span></div>
+          <div class="meta-row-new"><span class="meta-key">pH</span><span class="meta-val">${data.soil_data.pH}</span></div>
+          <div class="meta-row-new"><span class="meta-key">Slope</span><span class="meta-val">${data.terrain.slope_degrees}°</span></div>
+          <div class="meta-row-new"><span class="meta-key">Distance to water</span><span class="meta-val">${fmtMeters(data.terrain.distance_to_water_m)}</span></div>
+        </div>`;
+      }
+
+      if (landcover.label) {
+        const lcText = landcover.is_cropland
+          ? `Land cover: ${escapeHtml(landcover.label)}.`
+          : `Land cover: ${escapeHtml(landcover.label)}. Advice is based on soil & terrain — confirm this is your farm plot.`;
+        html += `<div class="landcover-note-new">${lcText}</div>`;
+      }
+
+      html += `</div>`;
+
+      // ── Moisture Forecast card ──
+      const mf = data.moisture_forecast || {};
+      html += `<div class="card" style="padding:16px;">
+        <div class="card-header" style="margin-bottom:14px;">
+          <h3 class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+            5-Day Moisture Forecast
+          </h3>
+          <span class="live-indicator"><span class="pulse-dot small"></span>Live</span>
+        </div>`;
+
+      if (!mf.data_available) {
+        html += `<p class="hint-text">${escapeHtml(mf.reason || 'Forecast unavailable — showing crop recommendation only.')}</p>`;
+      } else {
+        const label = mf.irrigate_by ? `Irrigate by ${formatDay(mf.irrigate_by)}` : 'No irrigation needed this week';
+        html += `<div style="font-weight:700;color:var(--text-1);font-size:14px;margin-bottom:4px;">${escapeHtml(label)}</div>
+          <div style="font-size:12px;color:var(--text-2);margin-bottom:8px;">${escapeHtml(mf.reason || '')}</div>`;
+        html += renderSparkline(mf.five_day_series || []);
+        if (mf.confidence === 'low') {
+          html += `<div class="confidence-note-new">⚠ ${escapeHtml(mf.confidence_note || 'Low-confidence forecast.')}</div>`;
+        }
+      }
+      html += `</div>`;
+
+      // ── Plant-Now Check card ──
+      const pn = data.plant_now_check || {};
+      const status = pn.status || 'unknown';
+      const statusLabel = {
+        safe: '✅ Safe to plant now',
+        wait: '⏳ Wait — irrigate first',
+        hold_off: '⚠️ Hold off — heavy rain risk',
+        unknown: '❓ Status unknown'
+      }[status] || '❓ Status unknown';
+
+      html += `<div class="card" style="padding:16px;">
+        <div class="card-header" style="margin-bottom:14px;">
+          <h3 class="card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Plant-Now Safety Check
+          </h3>
+        </div>
+        <div class="status-badge-new ${status}">${statusLabel}</div>
+        <div style="font-size:12.5px;color:var(--text-2);margin-top:6px;line-height:1.55;">${escapeHtml(pn.message || '')}</div>
+      </div>`;
+
+      el.innerHTML = html;
+    }
+
+    // ── Sparkline renderer ──
+    function renderSparkline(series) {
+      if (!series.length) return '';
+      const values = series.map(d => d.soil_moisture).filter(v => v !== null && v !== undefined);
+      if (!values.length) return '';
+      const max = Math.max(...values, 0.01);
+      const bars = series.map(d => {
+        const v = d.soil_moisture || 0;
+        const heightPct = Math.max(6, Math.round((v / max) * 100));
+        return `<div class="spark-bar-new" style="height:${heightPct}%" title="${v}"></div>`;
+      }).join('');
+      const labels = series.map(d => `<span>${formatDay(d.date, true)}</span>`).join('');
+      return `<div class="sparkline-new">${bars}</div><div class="spark-labels-new">${labels}</div>`;
+    }
+
+    function formatDay(dateStr, short) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr + 'T00:00:00');
+      if (isNaN(d)) return dateStr;
+      return short
+        ? d.toLocaleDateString(undefined, { weekday: 'short' })
+        : d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+    }
+
+    function fmtMeters(m) {
+      if (m === null || m === undefined) return '—';
+      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+    }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+  </script>
+</body>
+</html>
