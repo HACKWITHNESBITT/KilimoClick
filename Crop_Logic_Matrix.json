@@ -1,0 +1,6 @@
+{
+  "Maize": {"min_pH": 5.5, "max_pH": 7.0, "max_slope": 10, "water_need": "Medium", "irrigation_rule": "If slope > 8, use Sprinkler; else Rainfed"},
+  "Rice": {"min_pH": 5.5, "max_pH": 6.5, "max_slope": 2, "water_need": "High", "irrigation_rule": "Flooded"},
+  "Tomatoes": {"min_pH": 6.0, "max_pH": 6.8, "max_slope": 12, "water_need": "Medium", "irrigation_rule": "Drip"},
+  "Cassava": {"min_pH": 5.0, "max_pH": 6.0, "max_slope": 15, "water_need": "Low", "irrigation_rule": "Rainfed"}
+}
