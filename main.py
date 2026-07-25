@@ -14,13 +14,24 @@ from dotenv import load_dotenv
 load_dotenv()
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 # --------------------------------------------------------------------------
 # Configuration (environment variables)
 # --------------------------------------------------------------------------
 
-GIS_DATA_DIR = os.getenv("GIS_DATA_DIR", "AgriNode_GIS_Data")
+PROJECT_DIR = Path(__file__).resolve().parent
+
+# The JSON reference files and GeoTIFF layers are distributed alongside this
+# module.  An absolute GIS_DATA_DIR is still supported for deployments that
+# keep the data elsewhere; a relative one is resolved from this project rather
+# than from whichever directory uvicorn happens to be started in.
+_configured_gis_dir = Path(os.getenv("GIS_DATA_DIR", str(PROJECT_DIR)))
+GIS_DATA_DIR = (
+    _configured_gis_dir
+    if _configured_gis_dir.is_absolute()
+    else PROJECT_DIR / _configured_gis_dir
+)
 
 KIJANISPACE_BASE_URL = os.getenv("KIJANISPACE_BASE_URL", "").rstrip("/")
 KIJANISPACE_FORECAST_PATH = os.getenv(
@@ -48,7 +59,7 @@ logger = logging.getLogger("agrinode")
 # --------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Agri-Node Advisor",
+    title="KilimoClick Advisor",
     description="Plant Right, Water on Time — crop, irrigation-timing and "
     "plant-now safety advisory for smallholder farmers in the Lake Victoria basin.",
     version="1.0.0",
@@ -65,23 +76,33 @@ app.add_middleware(
 # Static reference data
 # --------------------------------------------------------------------------
 
-with open(os.path.join(GIS_DATA_DIR, "Crop_Logic_Matrix.json")) as f:
+with open(GIS_DATA_DIR / "Crop_Logic_Matrix.json") as f:
     CROP_LOGIC = json.load(f)
 
-with open(os.path.join(GIS_DATA_DIR, "Texture_Codes.json")) as f:
+with open(GIS_DATA_DIR / "Texture_Codes.json") as f:
     CODES = json.load(f)
 
 RASTERS = {
-    "landcover": os.path.join(GIS_DATA_DIR, "Kisumu_LandCover.tif"),
-    "soil_ph": os.path.join(GIS_DATA_DIR, "Kisumu_Soil_pH_4326.tif"),
-    "soil_clay": os.path.join(GIS_DATA_DIR, "Kisumu_Soil_Clay_4326.tif"),
-    "soil_texture": os.path.join(GIS_DATA_DIR, "Kisumu_Soil_Texture_4326.tif"),
-    "dem": os.path.join(GIS_DATA_DIR, "Kisumu_DEM_4326.tif"),
-    "slope": os.path.join(GIS_DATA_DIR, "Kisumu_Slope_4326.tif"),
-    "water_distance": os.path.join(GIS_DATA_DIR, "Kisumu_WaterDistance_4326.tif"),
+    "landcover": str(GIS_DATA_DIR / "Kisumu_LandCover.tif"),
+    "soil_ph": str(GIS_DATA_DIR / "Kisumu_Soil_pH_4326.tif"),
+    "soil_clay": str(GIS_DATA_DIR / "Kisumu_Soil_Clay_4326.tif"),
+    "soil_texture": str(GIS_DATA_DIR / "Kisumu_Soil_Texture_4326.tif"),
+    "dem": str(GIS_DATA_DIR / "Kisumu_DEM_4326.tif"),
+    "slope": str(GIS_DATA_DIR / "Kisumu_Slope_4326.tif"),
+    "water_distance": str(GIS_DATA_DIR / "Kisumu_WaterDistance_4326.tif"),
 }
 
 CROPLAND_PIXEL_VALUE = 40  # ESA WorldCover: 40 == Cropland
+LANDCOVER_LABELS = {
+    10: "Tree cover",
+    20: "Shrubland",
+    30: "Grassland",
+    40: "Cropland",
+    50: "Built-up",
+    60: "Bare / sparse vegetation",
+    80: "Permanent water body",
+    90: "Herbaceous wetland",
+}
 
 # A crop's minimum usable volumetric soil-moisture fraction, approximated from
 # its water_need label in Crop_Logic_Matrix.json. The matrix hand-off file
@@ -111,6 +132,7 @@ USSD_LOCATIONS = {
 
 _forecast_cache: dict[str, tuple[float, Optional[dict]]] = {}
 _NO_FORECAST = object()  # sentinel so a cached failure is distinguishable from "not cached at all"
+_forecast_failure_reasons: dict[str, tuple[float, str]] = {}
 
 # Failed calls (expired token, KijaniSpace hiccup, etc.) are cached for a much
 # shorter time than successful ones. This avoids hammering a dead endpoint on
@@ -138,7 +160,30 @@ def _cache_get(lat: float, lon: float):
 
 def _cache_set(lat: float, lon: float, value) -> None:
     ttl = FORECAST_CACHE_TTL_SECONDS if value is not _NO_FORECAST else FORECAST_FAILURE_CACHE_TTL_SECONDS
-    _forecast_cache[_cache_key(lat, lon)] = (time.time() + ttl, value)
+    key = _cache_key(lat, lon)
+    _forecast_cache[key] = (time.time() + ttl, value)
+    if value is not _NO_FORECAST:
+        _forecast_failure_reasons.pop(key, None)
+
+
+def _cache_forecast_failure(lat: float, lon: float, reason: str) -> None:
+    """Cache a short-lived user-safe explanation alongside a failed request."""
+    _cache_set(lat, lon, _NO_FORECAST)
+    _forecast_failure_reasons[_cache_key(lat, lon)] = (
+        time.time() + FORECAST_FAILURE_CACHE_TTL_SECONDS,
+        reason,
+    )
+
+
+def _forecast_failure_reason(lat: float, lon: float) -> Optional[str]:
+    entry = _forecast_failure_reasons.get(_cache_key(lat, lon))
+    if not entry:
+        return None
+    expires_at, reason = entry
+    if time.time() > expires_at:
+        _forecast_failure_reasons.pop(_cache_key(lat, lon), None)
+        return None
+    return reason
 
 
 # --------------------------------------------------------------------------
@@ -229,14 +274,19 @@ def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
 
     if not KIJANISPACE_BASE_URL:
         logger.info("KIJANISPACE_BASE_URL not configured — forecast unavailable.")
+        _cache_forecast_failure(
+            lat, lon, "Forecast service is not configured on this server."
+        )
         return None
 
     url = f"{KIJANISPACE_BASE_URL}{KIJANISPACE_FORECAST_PATH}"
-    headers = {}
+    headers = {
+        "Accept": "application/json"
+    }
     params = {"lat": lat, "lon": lon}
 
-    if KIJANISPACE_AUTH_TYPE == "bearer":
-        headers["Authorization"] = f"Bearer {KIJANISPACE_API_KEY}"
+    if KIJANISPACE_AUTH_TYPE == "api_key_header":
+        headers["Authorization"] = f"Basic {KIJANISPACE_API_KEY}"
     elif KIJANISPACE_AUTH_TYPE == "api_key_query":
         params["api_key"] = KIJANISPACE_API_KEY
     else:
@@ -251,12 +301,31 @@ def fetch_forecast(lat: float, lon: float) -> Optional[dict]:
         )
         response.raise_for_status()
         payload = response.json()
+
+        print(response)
         forecast = _normalize_forecast(payload)
         _cache_set(lat, lon, forecast)
         return forecast
-    except Exception as exc:
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        if status_code in (401, 403):
+            reason = "Forecast API authentication failed. Update the KijaniSpace access token."
+        else:
+            reason = f"Forecast service returned HTTP {status_code or 'an error'}. Try again shortly."
         logger.warning("KijaniSpace forecast fetch failed for (%s, %s): %s", lat, lon, exc)
-        _cache_set(lat, lon, _NO_FORECAST)  # cache the miss too, but briefly — see FORECAST_FAILURE_CACHE_TTL_SECONDS
+        _cache_forecast_failure(lat, lon, reason)
+        return None
+    except requests.RequestException as exc:
+        logger.warning("KijaniSpace forecast fetch failed for (%s, %s): %s", lat, lon, exc)
+        _cache_forecast_failure(
+            lat, lon, "Forecast service is temporarily unreachable. Try again shortly."
+        )
+        return None
+    except Exception as exc:
+        logger.warning("KijaniSpace forecast response could not be used for (%s, %s): %s", lat, lon, exc)
+        _cache_forecast_failure(
+            lat, lon, "Forecast service returned data in an unexpected format."
+        )
         return None
 
 
@@ -503,8 +572,7 @@ def build_recommendation(
     landcover = get_pixel_value(RASTERS["landcover"], lat, lon)
     if landcover is None:
         return {"error": "No data available for this location. Try a point inside the Kisumu area."}
-    if int(landcover) != CROPLAND_PIXEL_VALUE:
-        return {"error": "This point is not mapped as cropland. Please select a farm plot."}
+    landcover_code = int(landcover)
 
     ph = get_pixel_value(RASTERS["soil_ph"], lat, lon)
     clay = get_pixel_value(RASTERS["soil_clay"], lat, lon)
@@ -540,6 +608,14 @@ def build_recommendation(
 
     response = {
         "location": {"lat": lat, "lon": lon},
+        # ESA WorldCover is a 10 m classification. A dropped map pin can
+        # easily land on a path, tree, or roof within an otherwise workable
+        # plot, so this is advisory context rather than a hard block.
+        "landcover": {
+            "code": landcover_code,
+            "label": LANDCOVER_LABELS.get(landcover_code, "Unclassified"),
+            "is_cropland": landcover_code == CROPLAND_PIXEL_VALUE,
+        },
         "soil_data": {
             "pH": round(ph, 1),
             "clay_content_pct": round(clay, 1) if clay is not None else None,
@@ -574,7 +650,8 @@ def build_recommendation(
     if forecast is None:
         response["moisture_forecast"] = {
             "data_available": False,
-            "reason": "forecast unavailable — showing crop recommendation only",
+            "reason": _forecast_failure_reason(lat, lon)
+            or "Forecast unavailable — showing crop recommendation only.",
         }
         response["plant_now_check"] = {
             "status": "unknown",
@@ -655,10 +732,10 @@ async def ussd(request: Request):
 def _ussd_menu(steps: list[str]) -> str:
     # Step 0: root menu
     if len(steps) == 0:
-        return "CON Welcome to Agri-Node\n1. Get crop & irrigation advice\n2. Exit"
+        return "CON Welcome to KilimoClick\n1. Get crop & irrigation advice\n2. Exit"
 
     if steps[0] == "2":
-        return "END Thank you for using Agri-Node."
+        return "END Thank you for using KilimoClick."
 
     if steps[0] != "1":
         return "END Invalid choice. Please dial in again."
@@ -729,8 +806,19 @@ def _format_ussd_result(result: dict) -> str:
     return "\n".join(lines)
 
 
-# Serve the browser client from the API process.  Keeping the UI and API on
-# one origin removes the need for a separate dev server or CORS configuration
-# when running the project locally.
-FRONTEND_DIR = Path(__file__).resolve().parent / "forntend"
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+# Serve the browser client from the API process. Keeping the UI and API on one
+# origin removes the need for a separate dev server. The TIFF files remain
+# server-side: the browser requests /recommend and this module samples each
+# GeoTIFF at the selected map coordinate.
+FRONTEND_FILE = PROJECT_DIR / "index.html"
+STYLE_FILE = PROJECT_DIR / "style.css"
+
+
+@app.get("/", include_in_schema=False)
+def frontend():
+    return FileResponse(FRONTEND_FILE)
+
+
+@app.get("/style.css", include_in_schema=False)
+def stylesheet():
+    return FileResponse(STYLE_FILE, media_type="text/css")
