@@ -1617,3 +1617,311 @@ canvas { display: block; }
   .crops-grid { grid-template-columns: 1fr; }
 }
 
+/* ============================================================
+   UBER-STYLE MAP SEARCH & REAL-TIME TRACKING STYLES
+   ============================================================ */
+.map-container {
+  position: relative;
+}
+
+/* Floating Search Bar */
+.map-search-bar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  max-width: 640px;
+  z-index: 1000;
+  background: rgba(9, 21, 32, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.map-search-bar:focus-within {
+  border-color: var(--green);
+  box-shadow: 0 8px 32px rgba(74, 222, 128, 0.2);
+}
+
+.map-search-input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+}
+.search-input-icon {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+#map-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 13.5px;
+  font-family: var(--font-body);
+  outline: none;
+  padding: 8px 0;
+}
+#map-search-input::placeholder {
+  color: var(--text-3);
+  font-size: 13px;
+}
+.search-clear-btn {
+  color: var(--text-3);
+  font-size: 18px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: none;
+  padding: 0 4px;
+}
+.search-clear-btn:hover { color: #fff; }
+
+.map-search-submit-btn {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.map-search-submit-btn:hover {
+  background: var(--primary-light);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--primary-glow);
+}
+
+.map-live-track-btn {
+  background: rgba(96, 165, 250, 0.14);
+  color: var(--blue);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 8px;
+  padding: 8px 13px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.map-live-track-btn:hover {
+  background: rgba(96, 165, 250, 0.25);
+  border-color: var(--blue);
+}
+.map-live-track-btn.active {
+  background: rgba(74, 222, 128, 0.2);
+  color: var(--green);
+  border-color: var(--green);
+  box-shadow: 0 0 16px rgba(74, 222, 128, 0.35);
+}
+.live-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  animation: pulseDot 1.4s infinite;
+}
+@keyframes pulseDot {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+  70% { transform: scale(1.05); box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+
+/* Suggestions Dropdown */
+.map-search-suggestions {
+  position: absolute;
+  top: 60px;
+  left: 14px;
+  right: 14px;
+  max-width: 640px;
+  z-index: 1005;
+  background: var(--surface);
+  border: 1px solid var(--border-hover);
+  border-radius: 10px;
+  max-height: 250px;
+  overflow-y: auto;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+  display: none;
+}
+.suggestion-item {
+  padding: 11px 16px;
+  font-size: 13.5px;
+  color: var(--text-1);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: background 0.15s ease;
+}
+.suggestion-item:last-child { border-bottom: none; }
+.suggestion-item:hover { background: var(--surface-2); }
+.suggestion-item strong { color: var(--green); }
+.suggestion-type {
+  font-size: 11px;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+/* Location Card Overlay */
+.map-location-card {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  z-index: 1000;
+  width: 310px;
+  background: rgba(9, 21, 32, 0.94);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--border-hover);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6);
+  display: none;
+  transform: translateY(10px);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+}
+.map-location-card.visible {
+  display: block;
+  transform: translateY(0);
+  opacity: 1;
+}
+.loc-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.loc-card-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.loc-card-close {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.loc-card-close:hover { color: #fff; }
+.loc-card-title {
+  font-family: var(--font-head);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.loc-card-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-bottom: 12px;
+}
+.loc-card-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 9px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.loc-stat {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+}
+.stat-lbl {
+  font-size: 10.5px;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+.loc-stat strong {
+  font-size: 13px;
+  color: var(--text-1);
+  margin-top: 2px;
+}
+.btn-sm { padding: 8px 14px; font-size: 13px; }
+
+/* Custom Uber Pin Marker Styling */
+.uber-pin-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.uber-pin-wrapper {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.uber-pin-pulse {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.25);
+  border: 2px solid var(--green);
+  animation: uberPulseRing 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+.uber-pin-core {
+  position: relative;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #000;
+  border: 2.5px solid var(--green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+  color: var(--green);
+}
+@keyframes uberPulseRing {
+  0% { transform: scale(0.5); opacity: 1; }
+  80% { transform: scale(1.6); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@media (max-width: 640px) {
+  .map-search-bar {
+    flex-wrap: wrap;
+    top: 10px; left: 10px; right: 10px;
+  }
+  .map-search-submit-btn span { display: none; }
+  .map-live-track-btn span#track-btn-label { display: none; }
+  .map-location-card { width: calc(100% - 20px); left: 10px; bottom: 10px; }
+}
+
+
