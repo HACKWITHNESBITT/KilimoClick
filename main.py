@@ -7,6 +7,9 @@ from typing import Optional
 
 import requests
 import rasterio
+from dotenv import load_dotenv
+
+load_dotenv()
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
