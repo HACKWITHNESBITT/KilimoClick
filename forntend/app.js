@@ -98,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initScrollAnimations();
   initCounters();
   initBestPlantingModal();
+  initUSSDSimulator();
 });
 
 // ============================================================
@@ -107,33 +108,88 @@ function initNavbar() {
   const navbar    = document.getElementById('navbar');
   const hamburger = document.getElementById('hamburger');
   const navLinks  = document.getElementById('nav-links');
+  const links     = document.querySelectorAll('.nav-link');
 
-  // Scroll-based styling
+  // Scroll-based navbar styling
   window.addEventListener('scroll', () => {
-    navbar.classList.toggle('scrolled', window.scrollY > 24);
+    if (navbar) navbar.classList.toggle('scrolled', window.scrollY > 24);
   }, { passive: true });
 
-  // Mobile hamburger
-  hamburger.addEventListener('click', () => navLinks.classList.toggle('open'));
+  // Mobile hamburger toggle
+  if (hamburger && navLinks) {
+    hamburger.addEventListener('click', () => navLinks.classList.toggle('open'));
+  }
 
-  // Close on link click (mobile)
-  navLinks.querySelectorAll('.nav-link').forEach(link => {
-    link.addEventListener('click', () => navLinks.classList.remove('open'));
-  });
+  // Target elements mapping for navbar navigation
+  const targetIds = ['dashboard', 'soil-maps', 'community', 'irrigation'];
+  const targets = targetIds.map(id => document.getElementById(id)).filter(Boolean);
 
-  // Active link tracking
-  const sections = document.querySelectorAll('section[id], footer[id]');
-  const links    = document.querySelectorAll('.nav-link');
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        links.forEach(l => l.classList.remove('active'));
-        const active = document.querySelector(`.nav-link[href="#${entry.target.id}"]`);
-        if (active) active.classList.add('active');
+  let isManualClicking = false;
+  let clickTimeout = null;
+
+  // Handle click on top navbar links
+  links.forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      const href = link.getAttribute('href');
+      if (!href || !href.startsWith('#')) return;
+
+      const targetId = href.substring(1);
+      const targetEl = document.getElementById(targetId);
+
+      // Move green active state immediately to clicked button
+      links.forEach(l => l.classList.remove('active'));
+      link.classList.add('active');
+
+      // Close mobile menu if open
+      if (navLinks) navLinks.classList.remove('open');
+
+      if (targetEl) {
+        isManualClicking = true;
+        if (clickTimeout) clearTimeout(clickTimeout);
+
+        const navHeight = 75;
+        const elementPosition = targetEl.getBoundingClientRect().top + window.scrollY;
+        const offsetPosition = elementPosition - navHeight;
+
+        window.scrollTo({
+          top: offsetPosition,
+          behavior: 'smooth'
+        });
+
+        // Re-enable scroll observer active tracking after animation finishes
+        clickTimeout = setTimeout(() => {
+          isManualClicking = false;
+        }, 800);
       }
     });
-  }, { threshold: 0.35 });
-  sections.forEach(s => io.observe(s));
+  });
+
+  // Active link tracking on page scroll
+  window.addEventListener('scroll', () => {
+    if (isManualClicking) return;
+
+    const scrollPos = window.scrollY + 140;
+    let currentId = '';
+
+    targets.forEach(target => {
+      const top = target.offsetTop;
+      const height = target.offsetHeight;
+      if (scrollPos >= top && scrollPos < top + height) {
+        currentId = target.id;
+      }
+    });
+
+    if (currentId) {
+      links.forEach(link => {
+        if (link.getAttribute('href') === `#${currentId}`) {
+          link.classList.add('active');
+        } else {
+          link.classList.remove('active');
+        }
+      });
+    }
+  }, { passive: true });
 }
 
 // ============================================================
@@ -307,8 +363,14 @@ function initMap() {
   document.getElementById('btn-zoom-in').addEventListener('click',  () => map.zoomIn());
   document.getElementById('btn-zoom-out').addEventListener('click', () => map.zoomOut());
   document.getElementById('btn-reset').addEventListener('click',    () => map.setView([-0.092, 34.768], 10));
-  document.getElementById('btn-export').addEventListener('click',   () => {
-    showToast('Map export will capture the current view as PNG.', 'info');
+  document.getElementById('btn-export').addEventListener('click', async () => {
+    showToast('Preparing field analysis export...', 'info');
+    try {
+      const rec = latestRecommendation || await getRecommendation(document.getElementById('crop-select')?.value || 'Maize');
+      openExportModal(rec);
+    } catch (err) {
+      showToast('Could not load location advisory data for export.', 'warning');
+    }
   });
 
   // ============================================================
@@ -322,7 +384,6 @@ function initMap() {
   const searchInput    = document.getElementById('map-search-input');
   const searchBtn      = document.getElementById('map-search-btn');
   const clearBtn       = document.getElementById('map-search-clear');
-  const trackBtn       = document.getElementById('map-live-track-btn');
   const suggestionsBox = document.getElementById('map-search-suggestions');
   const locationCard   = document.getElementById('map-location-card');
   const locCloseBtn    = document.getElementById('loc-card-close');
@@ -398,9 +459,10 @@ function initMap() {
     locationCard.classList.add('visible');
 
     // Attach click listener for "Analyze Crops for this Location" button
-    document.getElementById('loc-card-analyze-btn').onclick = () => {
+    document.getElementById('loc-card-analyze-btn').onclick = async () => {
       const mainLocSelect = document.getElementById('location-select');
       const modalLocSelect = document.getElementById('modal-location-select');
+      const cropSelect = document.getElementById('crop-select');
 
       // Try matching location dropdown
       if (mainLocSelect) {
@@ -421,7 +483,18 @@ function initMap() {
       const cropAdvisor = document.getElementById('crop-advisor');
       if (cropAdvisor) cropAdvisor.scrollIntoView({ behavior: 'smooth' });
 
-      showToast(`Selected ${name} for crop suitability analysis!`, 'success');
+      const cropName = cropSelect ? cropSelect.value : 'Maize';
+      showToast(`Analyzing suitability for ${name}...`, 'info');
+
+      try {
+        const recommendation = await getRecommendation(cropName);
+        renderRecommendation(recommendation, cropName, name);
+        renderForecast(recommendation.moisture_forecast);
+        renderSafety(recommendation.plant_now_check);
+        showToast(`Live suitability check complete for ${cropName} in ${name}.`, 'success');
+      } catch (error) {
+        showToast(error.message, 'warning');
+      }
     };
   }
 
@@ -573,60 +646,7 @@ function initMap() {
     executeLocationSearch(q);
   };
 
-  // ============================================================
-  // REAL-TIME TRUE DEVICE GPS TRACKING (UBER "TRACK ME")
-  // ============================================================
-  trackBtn.addEventListener('click', () => {
-    if (isLiveTracking) {
-      // Turn off live tracking
-      isLiveTracking = false;
-      trackBtn.classList.remove('active');
-      document.getElementById('track-btn-label').textContent = 'Track Me Live';
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-      }
-      showToast('Real-time GPS tracking deactivated.', 'info');
-      return;
-    }
 
-    if (!navigator.geolocation) {
-      showToast('Geolocation is not supported by your browser.', 'warning');
-      return;
-    }
-
-    isLiveTracking = true;
-    trackBtn.classList.add('active');
-    document.getElementById('track-btn-label').textContent = 'GPS Active';
-    showToast('Acquiring real-time device GPS location...', 'info');
-
-    // True device navigator.geolocation.watchPosition
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-        
-        reverseGeocode(lat, lng, (placeName, region) => {
-          dropUberPin(lat, lng, `My Live Position (${placeName})`, region, 6.2, 3.0, true, accuracy);
-          showToast(`Real-Time GPS Active (Accuracy: ±${Math.round(accuracy)}m)`, 'success');
-        });
-      },
-      (err) => {
-        isLiveTracking = false;
-        trackBtn.classList.remove('active');
-        document.getElementById('track-btn-label').textContent = 'Track Me Live';
-        let msg = 'Could not access device GPS.';
-        if (err.code === 1) msg = 'Location access denied. Please allow location permissions in browser settings.';
-        else if (err.code === 2) msg = 'GPS signal unavailable. Ensure Location Services are enabled on your device.';
-        else if (err.code === 3) msg = 'GPS acquisition request timed out.';
-        showToast(msg, 'warning');
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 20000
-      }
-    );
-  });
 
   // Hero Secondary CTA Button Click: "Explore Maps / enter you location"
   if (heroSecondary) {
@@ -805,6 +825,13 @@ function initCharts() {
 // ============================================================
 function initCropChecker() {
   const btn = document.getElementById('check-suitability-btn');
+  const locSelect = document.getElementById('location-select');
+
+  if (locSelect) {
+    locSelect.addEventListener('change', () => {
+      selectLocationByName(locSelect.value);
+    });
+  }
 
   btn.addEventListener('click', async () => {
     const cropName = document.getElementById('crop-select').value;
@@ -865,44 +892,91 @@ function renderRecommendation(recommendation, cropName, locationName) {
 // ============================================================
 // FARMER REPORTS
 // ============================================================
-function initReports() {
-  const reports = [
-    {
-      location: 'Ahono Konos',
-      date: 'Jul 2025',
-      text: 'Planted Maize last week after rains. Soil feels good — slight clay patches near the lower field but manageable with furrow irrigation.',
-      crop: 'Maize',
-    },
-    {
-      location: 'Kisumu Central',
-      date: 'Jun 2025',
-      text: 'Tomatoes doing well on drip irrigation. pH tested at 6.2 — right in the sweet spot. Yield estimate is very promising.',
-      crop: 'Tomatoes',
-    },
-    {
-      location: 'Migosi',
-      date: 'Jun 2025',
-      text: 'Rice fields flooded as planned. Lake Victoria water table is favorable this season. Flat terrain is perfect.',
-      crop: 'Rice',
-    },
-  ];
+async function initReports() {
+  await fetchAndRenderReports();
 
+  const openBtn = document.getElementById('open-add-report-btn');
+  const modal = document.getElementById('add-report-modal');
+  const closeBtn = document.getElementById('report-close-btn');
+  const cancelBtn = document.getElementById('report-cancel-btn');
+  const form = document.getElementById('add-report-form');
+
+  if (openBtn && modal) {
+    openBtn.addEventListener('click', () => {
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+    });
+  }
+
+  function closeReportModal() {
+    if (modal) {
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+  }
+
+  if (closeBtn) closeBtn.addEventListener('click', closeReportModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeReportModal);
+
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const author = document.getElementById('report-author-input').value.trim() || 'Anonymous Farmer';
+      const location = document.getElementById('report-location-input').value.trim();
+      const crop = document.getElementById('report-crop-input').value;
+      const text = document.getElementById('report-text-input').value.trim();
+
+      if (!location || !text) {
+        showToast('Please fill in both location and report text.', 'warning');
+        return;
+      }
+
+      try {
+        const res = await fetch(new URL('/reports', API_BASE_URL), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ author, location, crop, text })
+        });
+        if (!res.ok) throw new Error('Could not publish report');
+        showToast('Farmer report published to community board!', 'success');
+        form.reset();
+        closeReportModal();
+        await fetchAndRenderReports();
+      } catch (err) {
+        showToast(err.message, 'warning');
+      }
+    });
+  }
+}
+
+async function fetchAndRenderReports() {
   const list = document.getElementById('reports-list');
-  list.innerHTML = '';
+  if (!list) return;
 
-  reports.forEach((r, i) => {
-    const el = document.createElement('div');
-    el.className = `report-card fade-in delay-${i + 1}`;
-    el.innerHTML = `
-      <div class="report-meta">
-        <div class="report-location"><svg style="display:inline;vertical-align:middle;margin-right:2px;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ${r.location}</div>
-        <div class="report-date">${r.date}</div>
-      </div>
-      <div class="report-text">${r.text}</div>
-      <span class="report-tag">#${r.crop}</span>
-    `;
-    list.appendChild(el);
-  });
+  try {
+    const res = await fetch(new URL('/reports', API_BASE_URL));
+    const data = await res.json();
+    const reports = data.reports || [];
+
+    list.innerHTML = '';
+    reports.forEach((r, i) => {
+      const el = document.createElement('div');
+      el.className = `report-card fade-in delay-${(i % 3) + 1}`;
+      el.innerHTML = `
+        <div class="report-meta">
+          <div class="report-location"><svg style="display:inline;vertical-align:middle;margin-right:2px;" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ${r.location} (${r.author || 'Farmer'})</div>
+          <div class="report-date">${r.date}</div>
+        </div>
+        <div class="report-text">${r.text}</div>
+        <span class="report-tag">#${r.crop}</span>
+      `;
+      list.appendChild(el);
+    });
+  } catch (err) {
+    console.warn('Using local reports fallback:', err);
+  }
 }
 
 // ============================================================
@@ -1536,3 +1610,151 @@ function renderBestPlantingModal(seasonKey, locationName) {
     cropsGrid.appendChild(card);
   });
 }
+
+// ============================================================
+// USSD INTERACTIVE SIMULATOR (*384*9460#)
+// ============================================================
+function initUSSDSimulator() {
+  const openBtn = document.getElementById('open-ussd-btn');
+  const modal = document.getElementById('ussd-modal');
+  const closeBtn = document.getElementById('ussd-close-btn');
+  const cancelBtn = document.getElementById('ussd-cancel-btn');
+  const resetBtn = document.getElementById('ussd-reset-btn');
+  const form = document.getElementById('ussd-form');
+  const screen = document.getElementById('ussd-screen');
+  const input = document.getElementById('ussd-input');
+
+  let ussdSteps = [];
+
+  if (!modal) return;
+
+  function openUSSD() {
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    resetUSSD();
+  }
+
+  function closeUSSD() {
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  if (openBtn) openBtn.addEventListener('click', openUSSD);
+  if (closeBtn) closeBtn.addEventListener('click', closeUSSD);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeUSSD);
+  if (resetBtn) resetBtn.addEventListener('click', () => resetUSSD());
+
+  async function sendUSSD(textPayload) {
+    if (screen) screen.textContent = 'Connecting to USSD Gateway...\n*384*9460#';
+    try {
+      const res = await fetch(new URL('/ussd', API_BASE_URL), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textPayload })
+      });
+      const responseText = await res.text();
+      if (screen) screen.textContent = responseText;
+      if (input) input.value = '';
+    } catch (err) {
+      if (screen) screen.textContent = 'END System Error. Could not connect to USSD backend.';
+    }
+  }
+
+  function resetUSSD() {
+    ussdSteps = [];
+    sendUSSD('');
+  }
+
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const val = input ? input.value.trim() : '';
+      if (val !== '') {
+        ussdSteps.push(val);
+      }
+      sendUSSD(ussdSteps.join('*'));
+    });
+  }
+}
+
+// ============================================================
+// FIELD ANALYSIS EXPORT MODAL
+// ============================================================
+function openExportModal(rec) {
+  const modal = document.getElementById('export-modal');
+  const body = document.getElementById('export-modal-body');
+  const closeBtn = document.getElementById('export-close-btn');
+  const bottomCloseBtn = document.getElementById('export-modal-close-btn');
+
+  if (!modal || !body || !rec) return;
+
+  function closeExport() {
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  if (closeBtn) closeBtn.onclick = closeExport;
+  if (bottomCloseBtn) bottomCloseBtn.onclick = closeExport;
+
+  const loc = rec.location || activeLocation;
+  const soil = rec.soil_data || {};
+  const terrain = rec.terrain || {};
+  const crops = rec.recommendations || [];
+  const safety = rec.plant_now_check || {};
+
+  body.innerHTML = `
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;font-family:'Inter',sans-serif;">
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px;margin-bottom:12px;">
+        <div>
+          <h4 style="margin:0;font-size:16px;color:#4ADE80;">📍 ${activeLocation.name || 'Kisumu Plot'}</h4>
+          <span style="font-size:12px;color:#8FA3B1;">Lat: ${loc.lat.toFixed(5)}, Lon: ${loc.lon.toFixed(5)}</span>
+        </div>
+        <div style="text-align:right;">
+          <span style="font-size:11px;color:#60A5FA;font-weight:700;">KILIMOCLICK ADVISORY</span><br>
+          <span style="font-size:11px;color:#8FA3B1;">${new Date().toLocaleDateString()}</span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div style="background:rgba(255,255,255,0.03);padding:10px;border-radius:6px;">
+          <div style="font-size:11px;color:#8FA3B1;">Soil pH</div>
+          <strong style="font-size:15px;color:#E8EDF3;">${soil.pH || 'N/A'}</strong>
+          <span style="font-size:11px;color:#8FA3B1;"> (${soil.texture || 'SoilGrids'})</span>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);padding:10px;border-radius:6px;">
+          <div style="font-size:11px;color:#8FA3B1;">Terrain Slope</div>
+          <strong style="font-size:15px;color:#E8EDF3;">${terrain.slope_degrees || 'N/A'}°</strong>
+          <span style="font-size:11px;color:#8FA3B1;"> (SRTM DEM)</span>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);padding:10px;border-radius:6px;">
+          <div style="font-size:11px;color:#8FA3B1;">Elevation</div>
+          <strong style="font-size:15px;color:#E8EDF3;">${soil.elevation_m || 'N/A'} m</strong>
+        </div>
+        <div style="background:rgba(255,255,255,0.03);padding:10px;border-radius:6px;">
+          <div style="font-size:11px;color:#8FA3B1;">Water Distance</div>
+          <strong style="font-size:15px;color:#E8EDF3;">${terrain.distance_to_water_m || 'N/A'} m</strong>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <h5 style="margin:0 0 6px 0;font-size:13px;color:#E8EDF3;">Recommended Crops & Irrigation</h5>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+          ${crops.map(c => `<span style="background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.3);color:#4ADE80;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;">🌾 ${c.name} (${c.irrigation_method})</span>`).join('') || '<span style="color:#8FA3B1;font-size:12px;">No recommended crop for this plot</span>'}
+        </div>
+      </div>
+
+      <div style="background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.2);border-radius:8px;padding:12px;">
+        <div style="font-size:12px;font-weight:700;color:#60A5FA;margin-bottom:4px;">🛡️ Plant-Now Safety Advisory</div>
+        <div style="font-size:13px;color:#E8EDF3;">${safety.message || 'Check safety advice prior to sowing seeds.'}</div>
+      </div>
+    </div>
+  `;
+
+  modal.classList.add('active');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
